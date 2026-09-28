@@ -1,14 +1,15 @@
-use openidconnect::core::{CoreClient, CoreProviderMetadata, CoreResponseType};
+use openidconnect::core::{CoreClient, CoreJsonWebKeySet, CoreProviderMetadata, CoreResponseType};
 use openidconnect::{
-    reqwest, AsyncHttpClient, AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret,
-    CsrfToken, HttpClientError, HttpRequest, HttpResponse, IssuerUrl, Nonce, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, Scope,
+    AsyncHttpClient, AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
+    HttpRequest, HttpResponse, IssuerUrl, Nonce, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl,
+    Scope,
 };
 use std::future::Future;
 use std::pin::Pin;
 
 use crate::config::OidcConfig;
 use crate::error::{AppError, AppResult};
+use crate::services::OidcLinkPolicy;
 
 /// Values that must be retained in the encrypted browser session while the
 /// user authenticates with the identity provider.
@@ -35,7 +36,9 @@ pub struct OidcService {
     config: OidcConfig,
 }
 
-/// HTTP client that rejects cleartext requests before any OIDC data is sent.
+/// HTTP client that rejects cleartext requests (loopback aside) before any
+/// OIDC data is sent. It wraps the server's own `reqwest` rather than the one
+/// `openidconnect` would bring, so the binary carries one HTTP stack.
 #[derive(Clone)]
 struct HttpsClient(reqwest::Client);
 
@@ -44,7 +47,7 @@ enum OidcHttpError {
     #[error("OIDC endpoint must use HTTPS: {0}")]
     InsecureEndpoint(String),
     #[error(transparent)]
-    Request(#[from] HttpClientError<reqwest::Error>),
+    Request(#[from] reqwest::Error),
 }
 
 impl<'c> AsyncHttpClient<'c> for HttpsClient {
@@ -55,20 +58,45 @@ impl<'c> AsyncHttpClient<'c> for HttpsClient {
     /// Execute an OIDC request only when its destination uses HTTPS.
     fn call(&'c self, request: HttpRequest) -> Self::Future {
         Box::pin(async move {
-            if request.uri().scheme_str() != Some("https") {
-                return Err(OidcHttpError::InsecureEndpoint(request.uri().to_string()));
+            let uri = request.uri().to_string();
+            let secure =
+                openidconnect::url::Url::parse(&uri).is_ok_and(|url| is_secure_transport(&url));
+            if !secure {
+                return Err(OidcHttpError::InsecureEndpoint(uri));
             }
 
-            AsyncHttpClient::call(&self.0, request)
-                .await
-                .map_err(OidcHttpError::from)
+            let response = self.0.execute(reqwest::Request::try_from(request)?).await?;
+            let status = response.status();
+            let headers = response.headers().clone();
+            let mut converted = HttpResponse::new(response.bytes().await?.to_vec());
+            *converted.status_mut() = status;
+            *converted.headers_mut() = headers;
+            Ok(converted)
         })
+    }
+}
+
+/// HTTPS, or plain HTTP to this machine, where there is no network to
+/// eavesdrop on. The exception is what lets a provider run next to the server
+/// in development.
+fn is_secure_transport(url: &openidconnect::url::Url) -> bool {
+    use openidconnect::url::Host;
+
+    match url.scheme() {
+        "https" => true,
+        "http" => match url.host() {
+            Some(Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
+            Some(Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(Host::Ipv6(ip)) => ip.is_loopback(),
+            None => false,
+        },
+        _ => false,
     }
 }
 
 /// Reject an endpoint advertised by the provider unless it uses HTTPS.
 fn require_https(url: &openidconnect::url::Url, endpoint: &str) -> AppResult<()> {
-    if url.scheme() == "https" {
+    if is_secure_transport(url) {
         Ok(())
     } else {
         Err(AppError::Internal(format!(
@@ -116,9 +144,12 @@ impl OidcService {
         &self.config.provider_name
     }
 
-    /// Whether a verified, previously unseen identity may create a local account.
-    pub fn auto_provision(&self) -> bool {
-        self.config.auto_provision
+    /// What a login may do with an identity that is not linked yet.
+    pub fn link_policy(&self) -> OidcLinkPolicy {
+        OidcLinkPolicy {
+            auto_provision: self.config.auto_provision,
+            link_existing_accounts: self.config.link_existing_accounts,
+        }
     }
 
     /// Build an authorization URL and fresh state, nonce, and PKCE protections.
@@ -163,8 +194,14 @@ impl OidcService {
         pkce_verifier: String,
         nonce: String,
     ) -> AppResult<OidcIdentity> {
+        // Keys are fetched per login, not kept from discovery: providers rotate
+        // them, and a set cached at startup would reject every token signed
+        // after the rotation until a restart.
+        let jwks = CoreJsonWebKeySet::fetch_async(self.metadata.jwks_uri(), &self.http_client)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to fetch OIDC signing keys: {e}")))?;
         let client = CoreClient::from_provider_metadata(
-            self.metadata.clone(),
+            self.metadata.clone().set_jwks(jwks),
             ClientId::new(self.config.client_id.clone()),
             Some(ClientSecret::new(self.config.client_secret.clone())),
         )
@@ -237,7 +274,7 @@ impl OidcService {
 #[cfg(test)]
 mod tests {
     use super::{require_https, HttpsClient, OidcHttpError};
-    use openidconnect::{http, reqwest, url::Url, AsyncHttpClient};
+    use openidconnect::{http, url::Url, AsyncHttpClient};
 
     #[test]
     fn oidc_endpoints_require_https() {
@@ -246,6 +283,39 @@ mod tests {
 
         assert!(require_https(&secure, "authorization endpoint").is_ok());
         assert!(require_https(&insecure, "authorization endpoint").is_err());
+    }
+
+    #[test]
+    fn oidc_endpoints_on_loopback_may_use_plain_http() {
+        for local in [
+            "http://localhost:1411/authorize",
+            "http://127.0.0.1:1411/authorize",
+            "http://[::1]:1411/authorize",
+        ] {
+            let url = Url::parse(local).unwrap();
+            assert!(require_https(&url, "issuer URL").is_ok(), "{local}");
+        }
+        for remote in [
+            "http://localhost.example.com/authorize",
+            "http://10.0.0.5/authorize",
+        ] {
+            let url = Url::parse(remote).unwrap();
+            assert!(require_https(&url, "issuer URL").is_err(), "{remote}");
+        }
+    }
+
+    #[actix_rt::test]
+    async fn oidc_http_client_allows_cleartext_to_loopback() {
+        let client = HttpsClient(reqwest::Client::new());
+        // Nothing listens on port 9; the point is that the scheme check lets
+        // the request through to the network layer.
+        let request = http::Request::builder()
+            .uri("http://127.0.0.1:9/.well-known/openid-configuration")
+            .body(Vec::new())
+            .unwrap();
+
+        let error = AsyncHttpClient::call(&client, request).await.unwrap_err();
+        assert!(matches!(error, OidcHttpError::Request(_)));
     }
 
     #[actix_rt::test]

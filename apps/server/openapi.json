@@ -7558,6 +7558,9 @@
               }
             }
           },
+          "302": {
+            "description": "Browser redirect to the dashboard, the login page, or the account-link page"
+          },
           "401": {
             "description": "Invalid or expired callback",
             "content": {
@@ -7587,6 +7590,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "An existing account must confirm the link with its password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -7608,6 +7621,102 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SsoConfigResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/auth/sso/link": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "GET /auth/sso/link\nThe account an SSO login matched, shown while its owner confirms.",
+        "operationId": "sso_link",
+        "responses": {
+          "200": {
+            "description": "The account waiting for its password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsoLinkResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No link is pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      },
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "POST /auth/sso/link\nLink the pending SSO identity to its account once the account's password\nis given, and sign in. A wrong password keeps the link pending for a retry.",
+        "operationId": "confirm_sso_link",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmSsoLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identity linked and signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Wrong password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No link is pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The identity belongs to another account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -8578,6 +8687,17 @@
         ],
         "properties": {
           "text": {
+            "type": "string"
+          }
+        }
+      },
+      "ConfirmSsoLinkRequest": {
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
             "type": "string"
           }
         }
@@ -10116,6 +10236,21 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "SsoLinkResponse": {
+        "type": "object",
+        "required": [
+          "email",
+          "provider_name"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "provider_name": {
+            "type": "string"
           }
         }
       },

@@ -1256,6 +1256,24 @@
       "waitSeconds": "{count} 秒",
       "waitMinutes": "{count} 分钟",
       "waitHours": "{count} 小时"
+    },
+    "link": {
+      "metaTitle": "关联你的账户 | Rustrak",
+      "title": "关联你的账户",
+      "description": "你已经有一个使用 {email} 的 Rustrak 账户。输入一次该账户的密码，即可将其与 {provider} 关联。之后只需 {provider} 即可登录。",
+      "emailLabel": "账户",
+      "passwordLabel": "密码",
+      "passwordPlaceholder": "你的 Rustrak 密码",
+      "passwordRequired": "请输入密码",
+      "submit": "关联并登录",
+      "submitting": "正在关联...",
+      "invalidPassword": "密码不正确",
+      "alreadyLinked": "此 {provider} 账户已关联到另一个 Rustrak 账户。",
+      "failure": "无法关联账户，请重试。",
+      "cancel": "使用其他账户",
+      "expiredTitle": "没有需要关联的内容",
+      "expiredDescription": "此请求已过期或已完成。请重新登录以重新开始。",
+      "backToLogin": "返回登录"
     }
   },
   "invite": {

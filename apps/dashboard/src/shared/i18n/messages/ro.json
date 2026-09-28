@@ -1256,6 +1256,24 @@
       "waitSeconds": "{count, plural, =1 {# secundă} few {# secunde} other {# de secunde}}",
       "waitMinutes": "{count, plural, =1 {# minut} few {# minute} other {# de minute}}",
       "waitHours": "{count, plural, =1 {# oră} few {# ore} other {# de ore}}"
+    },
+    "link": {
+      "metaTitle": "Asociază contul | Rustrak",
+      "title": "Asociază contul",
+      "description": "Ai deja un cont Rustrak cu {email}. Introdu parola lui o singură dată pentru a-l asocia cu {provider}. După aceea, {provider} îți ajunge pentru autentificare.",
+      "emailLabel": "Cont",
+      "passwordLabel": "Parolă",
+      "passwordPlaceholder": "Parola ta Rustrak",
+      "passwordRequired": "Introdu parola",
+      "submit": "Asociază și autentifică-te",
+      "submitting": "Se asociază...",
+      "invalidPassword": "Parola nu este corectă",
+      "alreadyLinked": "Acest cont {provider} este deja asociat cu alt cont Rustrak.",
+      "failure": "Contul nu a putut fi asociat. Încearcă din nou.",
+      "cancel": "Folosește alt cont",
+      "expiredTitle": "Nimic de asociat",
+      "expiredDescription": "Această cerere a expirat sau a fost deja finalizată. Autentifică-te din nou pentru a reîncepe.",
+      "backToLogin": "Înapoi la autentificare"
     }
   },
   "invite": {

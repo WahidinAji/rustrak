@@ -8,6 +8,7 @@ use crate::auth::{self, AuthenticatedUser, OidcService};
 use crate::db::DbPool;
 use crate::error::{AppError, AppResult, FieldErrorCode};
 use crate::models::{AcceptInvitation, CreateUserRequest, LoginRequest, User};
+use crate::services::OidcOutcome;
 use crate::services::{InvitationService, UsersService};
 
 #[cfg(feature = "openapi")]
@@ -36,6 +37,36 @@ struct UserResponse {
 const OIDC_STATE_KEY: &str = "oidc_state";
 const OIDC_NONCE_KEY: &str = "oidc_nonce";
 const OIDC_PKCE_KEY: &str = "oidc_pkce_verifier";
+const OIDC_PENDING_LINK_KEY: &str = "oidc_pending_link";
+
+/// An SSO identity waiting for the password of the account it matched. Kept
+/// in the encrypted session cookie, so the browser can neither read nor forge it.
+#[derive(Serialize, Deserialize)]
+struct PendingLink {
+    issuer: String,
+    subject: String,
+    email: String,
+    email_verified: bool,
+    user_id: i32,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+struct SsoLinkResponse {
+    email: String,
+    provider_name: String,
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ConfirmSsoLinkRequest {
+    password: String,
+}
+
+enum CallbackResult {
+    SignedIn(User),
+    NeedsPassword(PendingLink),
+}
 
 #[derive(Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -312,7 +343,7 @@ async fn handle_sso_callback(
     service: &OidcService,
     session: &Session,
     query: &SsoCallbackQuery,
-) -> AppResult<User> {
+) -> AppResult<CallbackResult> {
     // Remove all one-time values before validation/exchange so a callback can
     // never be replayed, including after a failed attempt.
     let expected_state = take_session_value(session, OIDC_STATE_KEY)?;
@@ -347,15 +378,18 @@ async fn handle_sso_callback(
             "SSO provider returned an invalid email address".to_string(),
         ));
     }
-    UsersService::find_or_provision_oidc(
-        pool,
-        &identity.issuer,
-        &identity.subject,
-        &identity.email,
-        identity.email_verified,
-        service.auto_provision(),
-    )
-    .await
+    let result =
+        match UsersService::find_or_provision_oidc(pool, &identity, service.link_policy()).await? {
+            OidcOutcome::SignedIn(user) => CallbackResult::SignedIn(user),
+            OidcOutcome::ConfirmWithPassword(user) => CallbackResult::NeedsPassword(PendingLink {
+                issuer: identity.issuer,
+                subject: identity.subject,
+                email: identity.email,
+                email_verified: identity.email_verified,
+                user_id: user.id,
+            }),
+        };
+    Ok(result)
 }
 
 #[cfg_attr(feature = "openapi", utoipa::path(
@@ -365,9 +399,11 @@ async fn handle_sso_callback(
     params(SsoCallbackQuery),
     responses(
         (status = 200, description = "SSO login completed", body = AuthResponse),
+        (status = 302, description = "Browser redirect to the dashboard, the login page, or the account-link page"),
         (status = 401, description = "Invalid or expired callback", body = crate::error::ErrorResponse),
         (status = 403, description = "Identity is not permitted", body = crate::error::ErrorResponse),
         (status = 404, description = "SSO is not configured", body = crate::error::ErrorResponse),
+        (status = 409, description = "An existing account must confirm the link with its password", body = crate::error::ErrorResponse),
     ),
     security(()),
 ))]
@@ -393,7 +429,22 @@ pub async fn sso_callback(
         .is_some_and(|accept| accept.contains("text/html"));
 
     match handle_sso_callback(pool.get_ref(), service, &session, &query).await {
-        Ok(user) => {
+        Ok(CallbackResult::NeedsPassword(pending)) => {
+            session
+                .insert(OIDC_PENDING_LINK_KEY, pending)
+                .map_err(|e| AppError::Internal(format!("Failed to store SSO link: {e}")))?;
+            if wants_html {
+                Ok(HttpResponse::Found()
+                    .insert_header((actix_web::http::header::LOCATION, "/link-account"))
+                    .finish())
+            } else {
+                Err(AppError::Conflict(
+                    "An account with this email already exists; confirm its password with POST /auth/sso/link"
+                        .to_string(),
+                ))
+            }
+        }
+        Ok(CallbackResult::SignedIn(user)) => {
             session.renew();
             auth::set_user_session(&session, user.id)?;
             if wants_html {
@@ -415,6 +466,78 @@ pub async fn sso_callback(
             }
         }
     }
+}
+
+fn pending_link(session: &Session) -> AppResult<PendingLink> {
+    session
+        .get::<PendingLink>(OIDC_PENDING_LINK_KEY)
+        .map_err(|e| AppError::Internal(format!("Failed to read SSO session: {e}")))?
+        .ok_or_else(|| AppError::NotFound("No SSO account link is pending".to_string()))
+}
+
+#[cfg_attr(feature = "openapi", utoipa::path(
+    get,
+    path = "/auth/sso/link",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "The account waiting for its password", body = SsoLinkResponse),
+        (status = 404, description = "No link is pending", body = crate::error::ErrorResponse),
+    ),
+    security(()),
+))]
+/// GET /auth/sso/link
+/// The account an SSO login matched, shown while its owner confirms.
+pub async fn sso_link(
+    oidc: web::Data<Option<OidcService>>,
+    session: Session,
+) -> AppResult<HttpResponse> {
+    let service = oidc
+        .as_ref()
+        .as_ref()
+        .ok_or_else(|| AppError::NotFound("SSO is not configured".to_string()))?;
+    let pending = pending_link(&session)?;
+    Ok(HttpResponse::Ok().json(SsoLinkResponse {
+        email: pending.email,
+        provider_name: service.provider_name().to_string(),
+    }))
+}
+
+#[cfg_attr(feature = "openapi", utoipa::path(
+    post,
+    path = "/auth/sso/link",
+    tag = "Auth",
+    request_body = ConfirmSsoLinkRequest,
+    responses(
+        (status = 200, description = "Identity linked and signed in", body = AuthResponse),
+        (status = 401, description = "Wrong password", body = crate::error::ErrorResponse),
+        (status = 404, description = "No link is pending", body = crate::error::ErrorResponse),
+        (status = 409, description = "The identity belongs to another account", body = crate::error::ErrorResponse),
+    ),
+    security(()),
+))]
+/// POST /auth/sso/link
+/// Link the pending SSO identity to its account once the account's password
+/// is given, and sign in. A wrong password keeps the link pending for a retry.
+pub async fn confirm_sso_link(
+    pool: web::Data<DbPool>,
+    session: Session,
+    req: web::Json<ConfirmSsoLinkRequest>,
+) -> AppResult<HttpResponse> {
+    let pending = pending_link(&session)?;
+    let identity = auth::OidcIdentity {
+        issuer: pending.issuer,
+        subject: pending.subject,
+        email: pending.email,
+        email_verified: pending.email_verified,
+    };
+    let user =
+        UsersService::confirm_oidc_link(pool.get_ref(), &identity, pending.user_id, &req.password)
+            .await?;
+
+    session.remove(OIDC_PENDING_LINK_KEY);
+    session.renew();
+    auth::set_user_session(&session, user.id)?;
+    Ok(HttpResponse::Ok().json(AuthResponse { user: user.into() }))
 }
 
 /// Read a one-time SSO value and remove it in the same step, so a callback
@@ -569,6 +692,8 @@ pub async fn update_current_user(
         sso_config,
         sso_start,
         sso_callback,
+        sso_link,
+        confirm_sso_link,
         logout,
         get_current_user,
         update_current_user
@@ -581,6 +706,8 @@ pub async fn update_current_user(
         UserResponse,
         SsoConfigResponse,
         SsoStartResponse,
+        SsoLinkResponse,
+        ConfirmSsoLinkRequest,
         UpdatePreferencesRequest,
         InvitationInfoResponse,
     ))
@@ -598,6 +725,8 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/sso/config", web::get().to(sso_config))
             .route("/sso/start", web::post().to(sso_start))
             .route("/sso/callback", web::get().to(sso_callback))
+            .route("/sso/link", web::get().to(sso_link))
+            .route("/sso/link", web::post().to(confirm_sso_link))
             .route("/logout", web::post().to(logout))
             .route("/me", web::get().to(get_current_user))
             .route("/me", web::patch().to(update_current_user)),

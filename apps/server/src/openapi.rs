@@ -61,6 +61,8 @@ impl Modify for SecurityAddon {
         crate::routes::auth::sso_config,
         crate::routes::auth::sso_start,
         crate::routes::auth::sso_callback,
+        crate::routes::auth::sso_link,
+        crate::routes::auth::confirm_sso_link,
         crate::routes::auth::logout,
         crate::routes::auth::get_current_user,
         crate::routes::auth::update_current_user,

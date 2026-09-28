@@ -52,7 +52,7 @@ pub use span::{SpanFilters, SpanService};
 pub use stats::StatsService;
 pub use storage::StorageService;
 pub use transaction::{TransactionFilters, TransactionService};
-pub use users::UsersService;
+pub use users::{OidcLinkPolicy, OidcOutcome, UsersService};
 
 pub use grouping_v1::calculate_grouping_key_v1;
 pub use message_normalization::normalize_message_for_grouping;

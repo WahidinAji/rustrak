@@ -1038,6 +1038,31 @@ export const handlers = [
     ),
   ),
 
+  http.get(`${BASE_URL}/auth/sso/link`, () =>
+    HttpResponse.json({
+      email: 'test@example.com',
+      provider_name: 'Pocket ID',
+    }),
+  ),
+
+  http.post(`${BASE_URL}/auth/sso/link`, async ({ request }) => {
+    const body = (await request.json()) as { password?: string };
+    if (body.password !== 'password123') {
+      return appErrorResponse(
+        'Unauthorized',
+        'Unauthorized: Invalid credentials',
+      );
+    }
+    return HttpResponse.json(
+      { user: mockUser },
+      {
+        headers: {
+          'Set-Cookie': 'rustrak_session=authenticated; HttpOnly; SameSite=Lax',
+        },
+      },
+    );
+  }),
+
   http.get(`${BASE_URL}/auth/sso/callback`, ({ request }) => {
     const url = new URL(request.url);
     if (!url.searchParams.get('state')) {

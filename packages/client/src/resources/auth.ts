@@ -6,9 +6,11 @@ import {
 } from '../schemas/invitation.js';
 import {
   authResponseSchema,
+  confirmSsoLinkRequestSchema,
   loginRequestSchema,
   registerRequestSchema,
   ssoConfigSchema,
+  ssoLinkSchema,
   ssoStartSchema,
   updatePreferencesRequestSchema,
   userSchema,
@@ -19,6 +21,7 @@ import type {
   LoginResult,
   RegisterRequest,
   SsoConfig,
+  SsoLink,
   UpdatePreferencesRequest,
   User,
 } from '../types/user.js';
@@ -79,6 +82,29 @@ export class AuthResource extends BaseResource {
           cookies,
         });
       },
+    );
+  }
+
+  /** The account an SSO login is waiting to link, if any. */
+  async getSsoLink(): Promise<Result<SsoLink, RustrakError>> {
+    return this.request(() => this.http.get('auth/sso/link'), ssoLinkSchema);
+  }
+
+  /** Link the pending SSO identity with the account's password and sign in. */
+  async confirmSsoLink(
+    password: string,
+  ): Promise<Result<LoginResult, RustrakError>> {
+    const validatedInput = this.validateInput(
+      { password },
+      confirmSsoLinkRequestSchema,
+    );
+    if (!validatedInput.success) {
+      return validatedInput;
+    }
+
+    return this.requestResponse(
+      () => this.http.post('auth/sso/link', { json: validatedInput.data }),
+      (response) => this.readLoginResult(response),
     );
   }
 

@@ -108,7 +108,7 @@ base64 = "0.23.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
 
 # Generic OpenID Connect SSO (authorization code flow, discovery, PKCE, ID token validation)
-openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }
+openidconnect = { version = "4.0.1", default-features = false }
 
 # HMAC for webhook signatures
 hmac = "0.13.0"
@@ -146,6 +146,9 @@ utoipa-scalar = { version = "0.3.0", features = ["actix-web"], optional = true }
 # crates, get `test-seams` enabled. Gating the seams on `debug_assertions`
 # instead made `cargo test --release` fail to compile.
 rustrak = { path = ".", default-features = false, features = ["test-seams"] }
+
+# Names the request type for helpers that drive an `init_service` app
+actix-http = "3.13.7"
 
 # Test framework & fixtures
 rstest = "0.27.0"

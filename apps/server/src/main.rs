@@ -82,6 +82,12 @@ async fn main() -> std::io::Result<()> {
     })?;
     let oidc_service = match oidc_config {
         Some(oidc_config) => {
+            if oidc_config.admits_any_provider_account() {
+                log::warn!(
+                    "OIDC_AUTO_PROVISION is on with no OIDC_ALLOWED_DOMAINS: anyone with an account at {} can sign in",
+                    oidc_config.issuer_url
+                );
+            }
             let service = rustrak::auth::OidcService::discover(oidc_config)
                 .await
                 .map_err(|e| {

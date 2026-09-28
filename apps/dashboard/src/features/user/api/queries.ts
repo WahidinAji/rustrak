@@ -12,6 +12,7 @@ import type {
   Result,
   RustrakError,
   SsoConfig,
+  SsoLink,
   TeamMember,
 } from '@rustrak/client';
 import { createClient } from '@/shared/api/rustrak';
@@ -20,6 +21,12 @@ import { createClient } from '@/shared/api/rustrak';
 export async function getSsoConfig(): Promise<Result<SsoConfig, RustrakError>> {
   const client = await createClient();
   return client.auth.getSsoConfig();
+}
+
+/** The account an SSO login is waiting to link, or `not_found` if none. */
+export async function getSsoLink(): Promise<Result<SsoLink, RustrakError>> {
+  const client = await createClient();
+  return client.auth.getSsoLink();
 }
 
 /**

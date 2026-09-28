@@ -5,6 +5,7 @@ import type {
   loginResultSchema,
   registerRequestSchema,
   ssoConfigSchema,
+  ssoLinkSchema,
   ssoStartSchema,
   updatePreferencesRequestSchema,
   userSchema,
@@ -50,3 +51,6 @@ export type SsoConfig = z.infer<typeof ssoConfigSchema>;
 
 /** One-time authorization URL returned when starting SSO. */
 export type SsoStart = z.infer<typeof ssoStartSchema>;
+
+/** An SSO login waiting for the password of the account it matched. */
+export type SsoLink = z.infer<typeof ssoLinkSchema>;

@@ -87,6 +87,49 @@ describe('AuthResource Integration', () => {
       expect(expectErr(result).kind).toBe('unauthenticated');
     });
 
+    it('reads the account an SSO login is waiting to link', async () => {
+      const result = expectOk(await client.auth.getSsoLink());
+      expect(result).toEqual({
+        email: 'test@example.com',
+        provider_name: 'Pocket ID',
+      });
+    });
+
+    it('reports when no SSO link is pending', async () => {
+      server.use(
+        http.get('http://localhost:8080/auth/sso/link', () =>
+          HttpResponse.json(
+            {
+              error: {
+                type: 'NotFound',
+                message: 'Resource not found: No SSO account link is pending',
+              },
+            },
+            { status: 404 },
+          ),
+        ),
+      );
+
+      const error = expectErr(await client.auth.getSsoLink());
+      expect(error.kind).toBe('not_found');
+    });
+
+    it('confirms an SSO link with the account password and signs in', async () => {
+      const result = expectOk(await client.auth.confirmSsoLink('password123'));
+      expect(result.user.email).toBe('test@example.com');
+      expect(result.cookies[0]).toContain('authenticated');
+    });
+
+    it('refuses an SSO link with the wrong password', async () => {
+      const error = expectErr(await client.auth.confirmSsoLink('wrong'));
+      expect(error.kind).toBe('unauthenticated');
+    });
+
+    it('does not send an empty password', async () => {
+      const error = expectErr(await client.auth.confirmSsoLink(''));
+      expect(error.kind).toBe('invalid_request');
+    });
+
     it('returns an authentication failure when callback state is missing', async () => {
       const result = await client.auth.completeSso({
         code: 'authorization-code',

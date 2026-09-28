@@ -63,6 +63,20 @@ export async function startSso(): Promise<Result<string, RustrakError>> {
   return Ok(result.data.authorizationUrl);
 }
 
+/** Link the pending SSO identity with the account's password and sign in. */
+export async function confirmSsoLink(
+  password: string,
+): Promise<Result<User, RustrakError>> {
+  const client = await createClient();
+  const result = await client.auth.confirmSsoLink(password);
+
+  if (!result.success) return result;
+
+  session.set({ state: 'authenticated', user: result.data.user });
+
+  return Ok(result.data.user);
+}
+
 /**
  * Logout the current user.
  *

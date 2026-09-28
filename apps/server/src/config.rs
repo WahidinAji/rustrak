@@ -115,6 +115,7 @@ pub struct OidcConfig {
     pub allowed_domains: Vec<String>,
     pub auto_provision: bool,
     pub require_email_verified: bool,
+    pub link_existing_accounts: bool,
 }
 
 impl std::fmt::Debug for OidcConfig {
@@ -131,6 +132,7 @@ impl std::fmt::Debug for OidcConfig {
             .field("allowed_domains", &self.allowed_domains)
             .field("auto_provision", &self.auto_provision)
             .field("require_email_verified", &self.require_email_verified)
+            .field("link_existing_accounts", &self.link_existing_accounts)
             .finish()
     }
 }
@@ -389,13 +391,10 @@ impl std::fmt::Display for ConfigError {
 
 /// Parse a boolean environment variable.
 ///
-/// Unset, or set to an empty/whitespace value, yields `default`; that is the
-/// same "empty means unset" rule `OIDC_ISSUER_URL` follows, so a Compose file
-/// that forwards an empty variable does not have to special-case these.
-/// Anything else must be one of the spellings below. An unrecognized value is
-/// an error rather than the default, because the default of a security switch
-/// such as `OIDC_AUTO_PROVISION` is the permissive one: `flase` must stop the
-/// process, not quietly keep provisioning accounts.
+/// Unset or empty yields `default`, the same "empty means unset" rule
+/// `OIDC_ISSUER_URL` follows. An unrecognized value stops startup instead of
+/// falling back, so a typo in a security switch never picks a value the
+/// operator did not write.
 fn env_bool(name: &str, default: bool) -> Result<bool, ConfigError> {
     let Ok(value) = env::var(name) else {
         return Ok(default);
@@ -412,6 +411,11 @@ fn env_bool(name: &str, default: bool) -> Result<bool, ConfigError> {
 }
 
 impl OidcConfig {
+    /// Whether anyone with an account at the provider can create one here.
+    pub fn admits_any_provider_account(&self) -> bool {
+        self.auto_provision && self.allowed_domains.is_empty()
+    }
+
     /// Load OIDC settings from the environment, or `None` when SSO is not
     /// configured. The four connection settings are all-or-nothing: setting
     /// `OIDC_ISSUER_URL` without the rest is a startup error, not a silently
@@ -454,8 +458,9 @@ impl OidcConfig {
                 .unwrap_or_else(|| "SSO".to_string()),
             scopes,
             allowed_domains,
-            auto_provision: env_bool("OIDC_AUTO_PROVISION", true)?,
+            auto_provision: env_bool("OIDC_AUTO_PROVISION", false)?,
             require_email_verified: env_bool("OIDC_REQUIRE_EMAIL_VERIFIED", true)?,
+            link_existing_accounts: env_bool("OIDC_LINK_EXISTING_ACCOUNTS", false)?,
         }))
     }
 }
