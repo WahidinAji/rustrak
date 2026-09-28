@@ -1,5 +1,11 @@
 # @rustrak/server
 
+## 0.15.1
+
+### Patch Changes
+
+- [`e9d9dc5`](https://github.com/rustrak/rustrak/commit/e9d9dc51494b62933f3f4b8a2b38f09e1c41f8f4) Thanks [@AbianS](https://github.com/AbianS)! - Sign in through any OpenID Connect provider, configured with `OIDC_*` and off by default; linking an existing account asks for its password once (@GhaziBenDahmane). Resolve an event by the ID a Sentry SDK returned, through `GET /api/projects/{id}/events/sentry/{event_id}` and `events.getBySentryId` in the client (@jav-ed). Quotas are enforced exactly in fixed minute and hour windows, 429s carry `X-Sentry-Rate-Limits`, the default limits are raised, a project can set lower limits of its own, and dropped events are counted per project. The account page gains a timezone picker, breadcrumb timestamps are read with Relay's grammar, and `docker-compose.yml` runs one SQLite container with PostgreSQL moved to `docker-compose.postgres.yml`.
+
 ## 0.15.0
 
 ### Minor Changes

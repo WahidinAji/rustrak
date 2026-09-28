@@ -1,5 +1,11 @@
 # docs
 
+## 0.15.11
+
+### Patch Changes
+
+- [`e9d9dc5`](https://github.com/rustrak/rustrak/commit/e9d9dc51494b62933f3f4b8a2b38f09e1c41f8f4) Thanks [@AbianS](https://github.com/AbianS)! - Add a single sign-on guide and document one container as the default deployment across installation, quickstart and production.
+
 ## 0.15.10
 
 ### Patch Changes
