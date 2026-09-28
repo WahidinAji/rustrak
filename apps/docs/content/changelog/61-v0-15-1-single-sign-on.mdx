@@ -1,0 +1,63 @@
+---
+version: v0.15.1
+title: Single Sign-On
+description: Sign in through any OpenID Connect provider, look up an event by the ID the SDK returned, and quotas that hold exactly at their limit and tell the SDK how long to back off
+date: 2026-09-28
+tags: [server, dashboard, auth, sso, rate-limits, client, docker]
+---
+
+## Single sign-on with OpenID Connect
+
+Rustrak signs people in through any OpenID Connect provider, such as Pocket
+ID, next to the email and password form
+([@GhaziBenDahmane](https://github.com/GhaziBenDahmane)). Set
+`OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` and
+`OIDC_REDIRECT_URL`, and the sign-in page shows the provider's button. Leave
+`OIDC_ISSUER_URL` unset and nothing changes.
+
+- An identity is tied to the provider's issuer and subject, not the email, so
+  changing an address at the provider keeps the same account
+- `OIDC_AUTO_PROVISION` creates an account on first sign-in, and
+  `OIDC_LINK_EXISTING_ACCOUNTS` links a sign-in to an account with the same
+  email. Both are off by default
+- Linking never happens on the provider's word alone: the owner types the
+  account's password once, and the link is made after that
+- `OIDC_REQUIRE_EMAIL_VERIFIED` (on by default) and `OIDC_ALLOWED_DOMAINS`
+  decide which identities are let in
+- Signing keys are fetched per sign-in, so key rotation at the provider keeps
+  working
+- An `OIDC_ISSUER_URL` without the other required settings stops startup
+  instead of leaving SSO silently off
+
+The [single sign-on guide](https://rustrak.github.io/rustrak/configuration/sso)
+covers the provider setup.
+
+## Find an event by its Sentry ID
+
+`GET /api/projects/{id}/events/sentry/{event_id}` resolves the ID a Sentry SDK
+returns from `captureException`, compact or hyphenated, to the full event and
+its issue, without knowing the issue first. `@rustrak/client` exposes it as
+`events.getBySentryId()` ([@jav-ed](https://github.com/jav-ed)).
+
+## Quotas that hold exactly
+
+Rate limits are counted in fixed minute and hour windows, checked and
+incremented in the same transaction that stores the event, the way Relay does
+it. Concurrent bursts can no longer slip past a limit.
+
+- A `429` carries `X-Sentry-Rate-Limits` next to `Retry-After`, and browsers
+  can read both, so SDKs back off for the right time
+- The defaults are raised: 60,000 events a minute and 1,000,000 an hour
+  overall, 20,000 and 300,000 per project
+- A project can set its own lower limits in its general settings. The
+  operator's `MAX_EVENTS_PER_PROJECT_*` stays the ceiling
+- Events a quota dropped are counted per project and shown in the same place
+
+## Improvements
+
+- The account page has a timezone picker, so each reader chooses the zone dates
+  are shown in
+- Breadcrumb timestamps are read with the grammar Relay accepts,
+  including lowercase `t` and `z`, a space separator and the leap second
+- `docker-compose.yml` runs one SQLite container serving the dashboard and API,
+  and refuses to start without `SESSION_SECRET_KEY`
