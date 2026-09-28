@@ -4,8 +4,8 @@ mod common;
 use chrono::{DateTime, Duration, Utc};
 use common::TestDb;
 use rustrak::models::{
-    AlertRuleChannelInput, AlertType, ChannelType, CreateAlertRule, CreateNotificationChannel,
-    CreateProject,
+    AlertRule, AlertRuleChannelInput, AlertType, ChannelType, CreateAlertRule,
+    CreateNotificationChannel, CreateProject,
 };
 use rustrak::services::grouping::DenormalizedFields;
 use rustrak::services::{AlertService, IssueService, ProjectService};
@@ -136,4 +136,91 @@ async fn positive_cooldown_still_suppresses_and_deduplicates_replays() {
 #[tokio::test]
 async fn expired_positive_cooldown_allows_one_alert_and_restarts() {
     exercise_cooldown(60, Some(Utc::now() - Duration::minutes(61)), 1).await;
+}
+
+async fn reservation_fixture(minutes: i32) -> (TestDb, AlertRule) {
+    let db = TestDb::new().await;
+    let project = ProjectService::create(
+        &db.pool,
+        CreateProject {
+            name: format!("Reservation proof {}", Uuid::new_v4()),
+            slug: None,
+            platform: None,
+        },
+    )
+    .await
+    .unwrap();
+    let rule = AlertService::create_rule(
+        &db.pool,
+        project.id,
+        CreateAlertRule {
+            name: "Reservation proof".into(),
+            alert_type: AlertType::NewIssue,
+            conditions: json!({}),
+            cooldown_minutes: minutes,
+            channels: Vec::new(),
+        },
+    )
+    .await
+    .unwrap();
+    (db, rule)
+}
+
+#[tokio::test]
+#[cfg(feature = "sqlite")]
+async fn zero_cooldown_allows_distinct_timestamps_in_the_same_sqlite_second() {
+    let (db, rule) = reservation_fixture(0).await;
+    let now = DateTime::parse_from_rfc3339("2026-09-28T12:00:00.500Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    sqlx::query("UPDATE alert_rules SET last_triggered_at = $1 WHERE id = $2")
+        .bind(now - Duration::milliseconds(200))
+        .bind(rule.id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    // These distinct instants always truncate to the same SQLite second.
+    assert!(
+        AlertService::reserve_cooldown_at_for_test(&db.pool, &rule, now)
+            .await
+            .unwrap(),
+        "zero cooldown must allow the reservation without a timestamp gap"
+    );
+}
+
+async fn exercise_changed_cooldown(previous: i32, current: i32, expected_reserved: bool) {
+    let (db, stale_rule) = reservation_fixture(previous).await;
+    let now = DateTime::parse_from_rfc3339("2026-09-28T12:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    // Model an admin edit committed after trigger_alert read the rule, but
+    // before its atomic reservation, without relying on task scheduling.
+    sqlx::query(
+        "UPDATE alert_rules SET cooldown_minutes = $1, last_triggered_at = $2 WHERE id = $3",
+    )
+    .bind(current)
+    .bind(now - Duration::minutes(10))
+    .bind(stale_rule.id)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let reserved = AlertService::reserve_cooldown_at_for_test(&db.pool, &stale_rule, now)
+        .await
+        .unwrap();
+    assert_eq!(reserved, expected_reserved, "use the current cooldown row");
+}
+
+#[tokio::test]
+async fn zero_changed_to_positive_cooldown_uses_current_setting() {
+    exercise_changed_cooldown(0, 60, false).await;
+}
+
+#[tokio::test]
+async fn increased_positive_cooldown_uses_current_setting() {
+    exercise_changed_cooldown(5, 60, false).await;
+}
+
+#[tokio::test]
+async fn positive_changed_to_zero_cooldown_uses_current_setting() {
+    exercise_changed_cooldown(60, 0, true).await;
 }
