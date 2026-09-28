@@ -615,6 +615,8 @@ impl AlertService {
         );
 
         // 4. Reserve the cooldown and record every delivery atomically.
+        // Zero disables suppression, including same-second SQLite timestamps or
+        // a backward clock adjustment. Event idempotency still prevents replays.
         let cooldown_threshold = Utc::now() - Duration::minutes(rule.cooldown_minutes as i64);
         let mut tx = pool.begin().await?;
 
@@ -624,11 +626,12 @@ impl AlertService {
             UPDATE alert_rules
             SET last_triggered_at = CURRENT_TIMESTAMP
             WHERE id = $1
-              AND (last_triggered_at IS NULL OR last_triggered_at < $2)
+              AND ($3 = 0 OR last_triggered_at IS NULL OR last_triggered_at < $2)
             "#,
         )
         .bind(rule.id)
         .bind(cooldown_threshold)
+        .bind(rule.cooldown_minutes)
         .execute(&mut *tx)
         .await?;
 
@@ -638,11 +641,12 @@ impl AlertService {
             UPDATE alert_rules
             SET last_triggered_at = datetime('now')
             WHERE id = $1
-              AND (last_triggered_at IS NULL OR datetime(last_triggered_at) < datetime($2))
+              AND ($3 = 0 OR last_triggered_at IS NULL OR datetime(last_triggered_at) < datetime($2))
             "#,
         )
         .bind(rule.id)
         .bind(cooldown_threshold.naive_utc())
+        .bind(rule.cooldown_minutes)
         .execute(&mut *tx)
         .await?;
 
