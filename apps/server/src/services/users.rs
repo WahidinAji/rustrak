@@ -1,8 +1,29 @@
+use crate::auth::OidcIdentity;
 use crate::db::DbPool;
 use crate::error::{AppError, AppResult};
 use crate::models::{CreateUserRequest, User, UserRole};
 
 pub struct UsersService;
+
+/// Where an SSO login ends up.
+#[derive(Debug)]
+pub enum OidcOutcome {
+    /// The identity resolved to an account; the browser can be signed in.
+    SignedIn(User),
+    /// The identity matches this existing account, but may only be linked to
+    /// it once the account's password has been given.
+    ConfirmWithPassword(User),
+}
+
+/// What an SSO login may do with an identity that is not linked to an
+/// account yet.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OidcLinkPolicy {
+    /// Create a local account when no account has the identity's email.
+    pub auto_provision: bool,
+    /// Attach the identity to an existing account with the same verified email.
+    pub link_existing_accounts: bool,
+}
 
 impl UsersService {
     /// Creates a new user with the given global role.
@@ -20,7 +41,24 @@ impl UsersService {
     {
         let password_hash = User::hash_password(&req.password)?;
         let email = User::normalize_email(&req.email);
+        Self::create_user_with_password_hash(executor, &email, &password_hash, role).await
+    }
 
+    /// Creates a user from an already-computed password hash.
+    ///
+    /// Separate from [`Self::create_user`] so a caller that must not run Argon2
+    /// itself — the OIDC provisioning path, which holds the `users` lock — can
+    /// pay for the hash before it opens its transaction.
+    pub async fn create_user_with_password_hash<'e, E>(
+        executor: E,
+        email: &str,
+        password_hash: &str,
+        role: UserRole,
+    ) -> AppResult<User>
+    where
+        E: sqlx::Executor<'e, Database = crate::db::Db>,
+    {
+        let email = User::normalize_email(email);
         let user = sqlx::query_as::<_, User>(
             r#"
             INSERT INTO users (email, password_hash, role)
@@ -29,7 +67,7 @@ impl UsersService {
             "#,
         )
         .bind(&email)
-        .bind(&password_hash)
+        .bind(password_hash)
         .bind(role.as_str())
         .fetch_one(executor)
         .await
@@ -61,6 +99,265 @@ impl UsersService {
         .await?;
 
         Ok(user)
+    }
+
+    /// Resolve an immutable OIDC identity to a local user. On first login the
+    /// identity is linked to an existing account with the same verified email,
+    /// or a password-inaccessible account is provisioned; `policy` says which
+    /// of the two are allowed.
+    pub async fn find_or_provision_oidc(
+        pool: &DbPool,
+        identity: &OidcIdentity,
+        policy: OidcLinkPolicy,
+    ) -> AppResult<OidcOutcome> {
+        let OidcIdentity {
+            issuer,
+            subject,
+            email,
+            email_verified,
+        } = identity;
+        let (issuer, subject, email, email_verified) = (
+            issuer.as_str(),
+            subject.as_str(),
+            email.as_str(),
+            *email_verified,
+        );
+
+        if let Some(user) = Self::get_by_oidc_identity(pool, issuer, subject).await? {
+            if !user.is_active {
+                return Err(AppError::Unauthorized("Account is disabled".to_string()));
+            }
+            Self::touch_oidc_login(pool, issuer, subject, user.id).await?;
+            return Ok(OidcOutcome::SignedIn(user));
+        }
+
+        let raw_email = email.trim();
+        let normalized_email = User::normalize_email(email);
+
+        // A provisioned account is OIDC-only: this password exists because the
+        // column is NOT NULL, and nothing ever learns it. Hash it here, off the
+        // Actix worker, instead of inside `create_user` below — Argon2 takes
+        // ~100ms and must not run once the transaction holds the `users` lock,
+        // where it would stall every other writer to that table (including
+        // last-login updates from users who are already provisioned).
+        let password_hash = if policy.auto_provision {
+            Some(
+                tokio::task::spawn_blocking(|| {
+                    User::hash_password(&uuid::Uuid::new_v4().to_string())
+                })
+                .await
+                .map_err(|e| AppError::Internal(format!("Password hashing task failed: {e}")))??,
+            )
+        } else {
+            None
+        };
+
+        let mut tx = crate::db::begin_write(pool).await?;
+
+        // SQLite's BEGIN IMMEDIATE already serializes this read-then-write
+        // sequence. PostgreSQL needs an explicit lock so two simultaneous
+        // first logins cannot both observe an empty users table and become
+        // administrators.
+        #[cfg(feature = "postgres")]
+        sqlx::query("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE")
+            .execute(&mut *tx)
+            .await?;
+
+        let candidates = sqlx::query_as::<_, User>(
+            r#"
+            SELECT id, email, password_hash, is_active, role, created_at, last_login, language, timezone
+            FROM users
+            WHERE LOWER(email) = LOWER($1)
+            ORDER BY (email = $2) DESC, id ASC
+            "#,
+        )
+        .bind(&normalized_email)
+        .bind(raw_email)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        // Legacy rows written before normalization may differ only in casing.
+        // When several match, only an exact-case match may be linked, so the
+        // identity never lands on the wrong account.
+        let ambiguous = candidates.len() > 1 && candidates[0].email != raw_email;
+        if ambiguous {
+            return Err(AppError::Forbidden(
+                "Multiple legacy accounts match this email address; exact case match required to link SSO identity"
+                    .to_string(),
+            ));
+        }
+        let user = candidates.into_iter().next();
+
+        let user = if let Some(existing) = user {
+            if !existing.is_active {
+                return Err(AppError::Unauthorized("Account is disabled".to_string()));
+            }
+            // Linking on the provider's word alone needs both the operator's
+            // consent and a verified email; otherwise the owner confirms.
+            if !policy.link_existing_accounts || !email_verified {
+                return Ok(OidcOutcome::ConfirmWithPassword(existing));
+            }
+            existing
+        } else {
+            let Some(password_hash) = password_hash else {
+                return Err(AppError::Forbidden(
+                    "No Rustrak account is linked to this SSO identity".to_string(),
+                ));
+            };
+            let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+                .fetch_one(&mut *tx)
+                .await?;
+            let role = if count.0 == 0 {
+                UserRole::Admin
+            } else {
+                UserRole::Member
+            };
+            Self::create_user_with_password_hash(&mut *tx, &normalized_email, &password_hash, role)
+                .await?
+        };
+
+        let inserted = sqlx::query(
+            r#"
+            INSERT INTO oidc_identities (user_id, issuer, subject, email_at_link)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (issuer, subject) DO NOTHING
+            "#,
+        )
+        .bind(user.id)
+        .bind(issuer)
+        .bind(subject)
+        .bind(raw_email)
+        .execute(&mut *tx)
+        .await?;
+
+        if inserted.rows_affected() == 0 {
+            // Another callback linked the same identity concurrently. Avoid
+            // committing a now-unreferenced user and resolve the winner.
+            tx.rollback().await?;
+            return Self::get_by_oidc_identity(pool, issuer, subject)
+                .await?
+                .map(OidcOutcome::SignedIn)
+                .ok_or_else(|| AppError::Internal("Failed to resolve SSO identity".to_string()));
+        }
+
+        sqlx::query("UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1")
+            .bind(user.id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+
+        Ok(OidcOutcome::SignedIn(user))
+    }
+
+    /// Link an SSO identity to an existing account once its owner has given
+    /// the account's password.
+    pub async fn confirm_oidc_link(
+        pool: &DbPool,
+        identity: &OidcIdentity,
+        user_id: i32,
+        password: &str,
+    ) -> AppResult<User> {
+        let invalid = || AppError::Unauthorized("Invalid credentials".to_string());
+        let user = Self::get_by_id(pool, user_id).await?.ok_or_else(invalid)?;
+        if !user.is_active {
+            return Err(AppError::Unauthorized("Account is disabled".to_string()));
+        }
+
+        // Argon2 off the Actix worker, as account provisioning does.
+        let (user, password) = (user, password.to_string());
+        let (user, matches) = tokio::task::spawn_blocking(move || {
+            let matches = user.verify_password(&password);
+            (user, matches)
+        })
+        .await
+        .map_err(|e| AppError::Internal(format!("Password check task failed: {e}")))?;
+        if !matches? {
+            return Err(invalid());
+        }
+
+        let mut tx = crate::db::begin_write(pool).await?;
+        let inserted = sqlx::query(
+            r#"
+            INSERT INTO oidc_identities (user_id, issuer, subject, email_at_link)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (issuer, subject) DO NOTHING
+            "#,
+        )
+        .bind(user.id)
+        .bind(&identity.issuer)
+        .bind(&identity.subject)
+        .bind(identity.email.trim())
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1")
+            .bind(user.id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+
+        if inserted.rows_affected() == 0 {
+            // Linked meanwhile, by this confirmation in another tab or by an
+            // automatic link. Only the same account may carry on.
+            let owner = Self::get_by_oidc_identity(pool, &identity.issuer, &identity.subject)
+                .await?
+                .ok_or_else(|| AppError::Internal("Failed to resolve SSO identity".to_string()))?;
+            if owner.id != user.id {
+                return Err(AppError::Conflict(
+                    "This SSO identity is already linked to another account".to_string(),
+                ));
+            }
+        }
+
+        Ok(user)
+    }
+
+    /// Look up the local account already linked to an `(issuer, subject)` pair.
+    /// The pair is immutable, so a provider-side email change does not move the
+    /// account; only an explicit new link does.
+    async fn get_by_oidc_identity(
+        pool: &DbPool,
+        issuer: &str,
+        subject: &str,
+    ) -> AppResult<Option<User>> {
+        let user = sqlx::query_as::<_, User>(
+            r#"
+            SELECT u.id, u.email, u.password_hash, u.is_active, u.role,
+                   u.created_at, u.last_login, u.language, u.timezone
+            FROM users u
+            INNER JOIN oidc_identities oi ON oi.user_id = u.id
+            WHERE oi.issuer = $1 AND oi.subject = $2
+            "#,
+        )
+        .bind(issuer)
+        .bind(subject)
+        .fetch_optional(pool)
+        .await?;
+        Ok(user)
+    }
+
+    /// Stamp a successful SSO login on both the identity and the local account,
+    /// in one transaction so the two cannot disagree about when the user last
+    /// signed in.
+    async fn touch_oidc_login(
+        pool: &DbPool,
+        issuer: &str,
+        subject: &str,
+        user_id: i32,
+    ) -> AppResult<()> {
+        let mut tx = crate::db::begin_write(pool).await?;
+        sqlx::query(
+            "UPDATE oidc_identities SET last_login = CURRENT_TIMESTAMP WHERE issuer = $1 AND subject = $2",
+        )
+        .bind(issuer)
+        .bind(subject)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Gets a user by ID

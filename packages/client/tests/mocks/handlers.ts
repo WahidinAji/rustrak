@@ -1046,6 +1046,73 @@ export const handlers = [
   }),
 
   // Authentication
+  http.get(`${BASE_URL}/auth/sso/config`, () =>
+    HttpResponse.json({ enabled: true, provider_name: 'Pocket ID' }),
+  ),
+
+  http.post(`${BASE_URL}/auth/sso/start`, () =>
+    HttpResponse.json(
+      {
+        authorization_url: 'https://id.example.com/authorize?client_id=rustrak',
+      },
+      {
+        headers: {
+          'Set-Cookie': 'rustrak_session=oidc-state; HttpOnly; SameSite=Lax',
+        },
+      },
+    ),
+  ),
+
+  http.get(`${BASE_URL}/auth/sso/link`, () =>
+    HttpResponse.json({
+      email: 'test@example.com',
+      provider_name: 'Pocket ID',
+    }),
+  ),
+
+  http.post(`${BASE_URL}/auth/sso/link`, async ({ request }) => {
+    const body = (await request.json()) as { password?: string };
+    if (body.password !== 'password123') {
+      return appErrorResponse(
+        'Unauthorized',
+        'Unauthorized: Invalid credentials',
+      );
+    }
+    return HttpResponse.json(
+      { user: mockUser },
+      {
+        headers: {
+          'Set-Cookie': 'rustrak_session=authenticated; HttpOnly; SameSite=Lax',
+        },
+      },
+    );
+  }),
+
+  http.get(`${BASE_URL}/auth/sso/callback`, ({ request }) => {
+    const url = new URL(request.url);
+    if (!url.searchParams.get('state')) {
+      return appErrorResponse(
+        'Unauthorized',
+        'Unauthorized: SSO callback is missing state',
+      );
+    }
+    if (!url.searchParams.get('code')) {
+      return appErrorResponse(
+        'Unauthorized',
+        'Unauthorized: SSO callback is missing a code',
+      );
+    }
+
+    return HttpResponse.json(
+      { user: mockUser },
+      {
+        headers: {
+          'Set-Cookie': 'rustrak_session=authenticated; HttpOnly; SameSite=Lax',
+        },
+      },
+    );
+  }),
+
   //
   // `POST /auth/register` is live (`routes/auth.rs:277`) but
   // `routes/auth.rs:106-115` ignores its body entirely and always returns

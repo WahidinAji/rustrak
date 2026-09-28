@@ -6,11 +6,12 @@
 use crate::common::TestDb;
 use actix_session::{storage::CookieSessionStore, SessionMiddleware};
 use actix_web::{cookie::Key, test, web, App};
+use rustrak::auth::OidcIdentity;
 use rustrak::config::{Config, DashboardConfig, DatabaseConfig};
 use rustrak::middleware::auth::RequireAuth;
 use rustrak::models::User;
 use rustrak::routes;
-use rustrak::services::UsersService;
+use rustrak::services::{OidcLinkPolicy, OidcOutcome, UsersService};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -1319,4 +1320,371 @@ async fn test_patch_me_unauthenticated_is_rejected() {
 
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 401);
+}
+
+// =============================================================================
+// OpenID Connect provisioning tests
+// =============================================================================
+
+async fn oidc_outcome(
+    pool: &rustrak::db::DbPool,
+    subject: &str,
+    email: &str,
+    email_verified: bool,
+    policy: OidcLinkPolicy,
+) -> rustrak::error::AppResult<OidcOutcome> {
+    let identity = OidcIdentity {
+        issuer: "https://id.example.com".to_string(),
+        subject: subject.to_string(),
+        email: email.to_string(),
+        email_verified,
+    };
+    UsersService::find_or_provision_oidc(pool, &identity, policy).await
+}
+
+/// A login expected to finish without asking for a password.
+async fn oidc_login(
+    pool: &rustrak::db::DbPool,
+    subject: &str,
+    email: &str,
+    email_verified: bool,
+    policy: OidcLinkPolicy,
+) -> rustrak::error::AppResult<User> {
+    oidc_outcome(pool, subject, email, email_verified, policy)
+        .await
+        .map(|outcome| match outcome {
+            OidcOutcome::SignedIn(user) => user,
+            OidcOutcome::ConfirmWithPassword(user) => {
+                panic!("expected a sign-in, was asked to confirm {}", user.email)
+            }
+        })
+}
+
+fn linking(link_existing_accounts: bool, auto_provision: bool) -> OidcLinkPolicy {
+    OidcLinkPolicy {
+        auto_provision,
+        link_existing_accounts,
+    }
+}
+
+#[actix_web::test]
+async fn test_oidc_first_login_provisions_admin_and_reuses_subject() {
+    let db = TestDb::new().await;
+
+    let first = oidc_login(
+        &db.pool,
+        "pocket-id-subject",
+        "Owner@Example.com",
+        true,
+        linking(true, true),
+    )
+    .await
+    .expect("first OIDC login should provision a user");
+
+    assert_eq!(first.email, "owner@example.com");
+    assert!(
+        first.is_admin(),
+        "the first account must bootstrap as admin"
+    );
+    let probe = uuid::Uuid::new_v4().to_string();
+    assert!(
+        !first
+            .verify_password(&probe)
+            .expect("the account must carry a well-formed hash for the NOT NULL column"),
+        "an OIDC-provisioned account must not accept a password"
+    );
+
+    let returning = oidc_login(
+        &db.pool,
+        "pocket-id-subject",
+        "new-address@example.com",
+        true,
+        linking(true, true),
+    )
+    .await
+    .expect("returning OIDC login should resolve its linked account");
+
+    assert_eq!(returning.id, first.id);
+    assert_eq!(UsersService::user_count(&db.pool).await.unwrap(), 1);
+}
+
+#[actix_web::test]
+async fn test_oidc_links_existing_verified_email_account() {
+    let db = TestDb::new().await;
+    let existing_password = format!("pass-{}", uuid::Uuid::new_v4());
+    let existing =
+        create_test_user(&db.pool, "existing@example.com", &existing_password, true).await;
+
+    let linked = oidc_login(
+        &db.pool,
+        "existing-subject",
+        "EXISTING@example.com",
+        true,
+        linking(true, true),
+    )
+    .await
+    .expect("verified email should link to the existing account");
+
+    assert_eq!(linked.id, existing.id);
+    assert!(linked.verify_password(&existing_password).unwrap());
+    assert_eq!(UsersService::user_count(&db.pool).await.unwrap(), 1);
+}
+
+#[actix_web::test]
+async fn test_oidc_asks_for_the_password_of_an_existing_account_when_linking_is_disabled() {
+    let db = TestDb::new().await;
+    let password = format!("pass-{}", uuid::Uuid::new_v4());
+    let existing = create_test_user(&db.pool, "owner@example.com", &password, true).await;
+
+    // The provider vouches for the email, but that claim alone must not hand
+    // over an account that already exists: its owner has to prove it.
+    let outcome = oidc_outcome(
+        &db.pool,
+        "someone-else",
+        "owner@example.com",
+        true,
+        linking(false, true),
+    )
+    .await
+    .unwrap();
+
+    match outcome {
+        OidcOutcome::ConfirmWithPassword(user) => assert_eq!(user.id, existing.id),
+        OidcOutcome::SignedIn(_) => panic!("an existing account was linked without its password"),
+    }
+    assert_eq!(UsersService::user_count(&db.pool).await.unwrap(), 1);
+
+    // Nothing was linked: a retry with linking on is still an unknown identity.
+    let linked = oidc_login(
+        &db.pool,
+        "someone-else",
+        "owner@example.com",
+        true,
+        linking(true, true),
+    )
+    .await
+    .expect("with linking enabled the same identity links");
+    assert_eq!(linked.id, existing.id);
+}
+
+#[actix_web::test]
+async fn test_oidc_links_an_existing_account_without_auto_provisioning() {
+    let db = TestDb::new().await;
+    let password = format!("pass-{}", uuid::Uuid::new_v4());
+    let existing = create_test_user(&db.pool, "owner@example.com", &password, true).await;
+
+    // Provisioning only governs creating accounts; linking one that exists is
+    // a separate switch.
+    let linked = oidc_login(
+        &db.pool,
+        "owner-subject",
+        "owner@example.com",
+        true,
+        linking(true, false),
+    )
+    .await
+    .expect("linking must not depend on auto-provisioning");
+
+    assert_eq!(linked.id, existing.id);
+}
+
+#[actix_web::test]
+async fn test_oidc_link_is_confirmed_only_with_the_account_password() {
+    let db = TestDb::new().await;
+    let password = format!("pass-{}", uuid::Uuid::new_v4());
+    let existing = create_test_user(&db.pool, "owner@example.com", &password, true).await;
+    let identity = OidcIdentity {
+        issuer: "https://id.example.com".to_string(),
+        subject: "owner-subject".to_string(),
+        email: "owner@example.com".to_string(),
+        email_verified: true,
+    };
+
+    let wrong = UsersService::confirm_oidc_link(&db.pool, &identity, existing.id, "not-it").await;
+    assert!(matches!(
+        wrong,
+        Err(rustrak::error::AppError::Unauthorized(_))
+    ));
+    let still_unlinked = oidc_outcome(
+        &db.pool,
+        "owner-subject",
+        "owner@example.com",
+        true,
+        linking(false, false),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        still_unlinked,
+        OidcOutcome::ConfirmWithPassword(_)
+    ));
+
+    let linked = UsersService::confirm_oidc_link(&db.pool, &identity, existing.id, &password)
+        .await
+        .expect("the right password links the identity");
+    assert_eq!(linked.id, existing.id);
+
+    // From now on the identity signs in directly, whatever the switches say.
+    let returning = oidc_login(
+        &db.pool,
+        "owner-subject",
+        "owner@example.com",
+        true,
+        linking(false, false),
+    )
+    .await
+    .unwrap();
+    assert_eq!(returning.id, existing.id);
+}
+
+#[actix_web::test]
+async fn test_oidc_link_cannot_move_an_identity_to_a_second_account() {
+    let db = TestDb::new().await;
+    let first = create_test_user(&db.pool, "first@example.com", "password-one", true).await;
+    let second = create_test_user(&db.pool, "second@example.com", "password-two", false).await;
+    let identity = OidcIdentity {
+        issuer: "https://id.example.com".to_string(),
+        subject: "shared-subject".to_string(),
+        email: "first@example.com".to_string(),
+        email_verified: true,
+    };
+
+    UsersService::confirm_oidc_link(&db.pool, &identity, first.id, "password-one")
+        .await
+        .unwrap();
+    let moved =
+        UsersService::confirm_oidc_link(&db.pool, &identity, second.id, "password-two").await;
+
+    assert!(matches!(moved, Err(rustrak::error::AppError::Conflict(_))));
+    let owner = oidc_login(
+        &db.pool,
+        "shared-subject",
+        "first@example.com",
+        true,
+        linking(false, false),
+    )
+    .await
+    .unwrap();
+    assert_eq!(owner.id, first.id);
+}
+
+#[actix_web::test]
+async fn test_oidc_asks_for_the_password_when_the_email_is_unverified() {
+    let db = TestDb::new().await;
+    let existing_password = format!("pass-{}", uuid::Uuid::new_v4());
+    let existing = create_test_user(&db.pool, "victim@example.com", &existing_password, true).await;
+
+    // Automatic linking trusts the provider's verification; without it, only
+    // the account's password can attach the identity.
+    let outcome = oidc_outcome(
+        &db.pool,
+        "attacker-subject",
+        "victim@example.com",
+        false,
+        linking(true, true),
+    )
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        outcome,
+        OidcOutcome::ConfirmWithPassword(user) if user.id == existing.id
+    ));
+}
+
+#[actix_web::test]
+async fn test_oidc_unverified_email_provisions_new_account_when_no_existing_account() {
+    let db = TestDb::new().await;
+    let user = oidc_login(
+        &db.pool,
+        "new-subject",
+        "brandnew@example.com",
+        false,
+        linking(true, true),
+    )
+    .await
+    .expect("new account can be provisioned even if email is unverified");
+
+    assert_eq!(user.email, "brandnew@example.com");
+}
+
+#[actix_web::test]
+async fn test_oidc_links_exact_case_variant_when_multiple_legacy_accounts_exist() {
+    let db = TestDb::new().await;
+    let lower_password = format!("pass-{}", uuid::Uuid::new_v4());
+    let upper_password = format!("pass-{}", uuid::Uuid::new_v4());
+    insert_legacy_user(&db.pool, "user@example.com", &lower_password).await;
+    insert_legacy_user(&db.pool, "User@Example.com", &upper_password).await;
+
+    // SSO login with exact casing links to the upper-case account, not the lower-case one.
+    let linked_upper = oidc_login(
+        &db.pool,
+        "upper-subject",
+        "User@Example.com",
+        true,
+        linking(true, true),
+    )
+    .await
+    .expect("exact casing should link to the matching legacy account");
+
+    assert_eq!(linked_upper.email, "User@Example.com");
+    assert!(linked_upper.verify_password(&upper_password).unwrap());
+
+    // SSO login with lower casing links to the lower-case account.
+    let linked_lower = oidc_login(
+        &db.pool,
+        "lower-subject",
+        "user@example.com",
+        true,
+        linking(true, true),
+    )
+    .await
+    .expect("exact casing should link to the matching legacy account");
+
+    assert_eq!(linked_lower.email, "user@example.com");
+    assert!(linked_lower.verify_password(&lower_password).unwrap());
+    assert_ne!(linked_upper.id, linked_lower.id);
+}
+
+#[actix_web::test]
+async fn test_oidc_refuses_ambiguous_linking_when_multiple_legacy_accounts_exist() {
+    let db = TestDb::new().await;
+    let lower_password = format!("pass-{}", uuid::Uuid::new_v4());
+    let upper_password = format!("pass-{}", uuid::Uuid::new_v4());
+    insert_legacy_user(&db.pool, "user@example.com", &lower_password).await;
+    insert_legacy_user(&db.pool, "User@Example.com", &upper_password).await;
+
+    // A casing that matches neither exact account cannot link to either.
+    let result = oidc_login(
+        &db.pool,
+        "ambiguous-subject",
+        "USER@EXAMPLE.COM",
+        true,
+        linking(true, true),
+    )
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(rustrak::error::AppError::Forbidden(_))
+    ));
+}
+
+#[actix_web::test]
+async fn test_oidc_auto_provision_can_be_disabled() {
+    let db = TestDb::new().await;
+    let result = oidc_login(
+        &db.pool,
+        "unknown-subject",
+        "unknown@example.com",
+        true,
+        linking(true, false),
+    )
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(rustrak::error::AppError::Forbidden(_))
+    ));
+    assert_eq!(UsersService::user_count(&db.pool).await.unwrap(), 0);
 }

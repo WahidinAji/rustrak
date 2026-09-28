@@ -1260,6 +1260,10 @@
       "showPassword": "Mostrar contraseña",
       "signingIn": "Iniciando sesión...",
       "login": "Iniciar sesión",
+      "continueWithSso": "Continuar con {provider}",
+      "ssoRedirecting": "Redirigiendo...",
+      "ssoFailure": "El inicio de sesión único falló. Inténtalo de nuevo.",
+      "or": "o",
       "invalidCredentials": "Correo electrónico o contraseña no válidos",
       "failureNetwork": "No se pudo contactar con el servidor. Comprueba tu conexión e inténtalo de nuevo.",
       "failureRateLimited": "Demasiados intentos de inicio de sesión. Espera aproximadamente {duration} antes de intentarlo de nuevo.",
@@ -1270,6 +1274,24 @@
       "waitSeconds": "{count, plural, =1 {# segundo} other {# segundos}}",
       "waitMinutes": "{count, plural, =1 {# minuto} other {# minutos}}",
       "waitHours": "{count, plural, =1 {# hora} other {# horas}}"
+    },
+    "link": {
+      "metaTitle": "Vincula tu cuenta | Rustrak",
+      "title": "Vincula tu cuenta",
+      "description": "Ya tienes una cuenta de Rustrak con {email}. Escribe su contraseña una vez para conectarla con {provider}. Después bastará con {provider} para entrar.",
+      "emailLabel": "Cuenta",
+      "passwordLabel": "Contraseña",
+      "passwordPlaceholder": "Tu contraseña de Rustrak",
+      "passwordRequired": "Escribe tu contraseña",
+      "submit": "Vincular e iniciar sesión",
+      "submitting": "Vinculando...",
+      "invalidPassword": "La contraseña no es correcta",
+      "alreadyLinked": "Esta cuenta de {provider} ya está vinculada a otra cuenta de Rustrak.",
+      "failure": "No se pudo vincular la cuenta. Inténtalo de nuevo.",
+      "cancel": "Usar otra cuenta",
+      "expiredTitle": "No hay nada que vincular",
+      "expiredDescription": "Esta solicitud ha caducado o ya se completó. Vuelve a iniciar sesión para empezar de nuevo.",
+      "backToLogin": "Volver al inicio de sesión"
     }
   },
   "invite": {

@@ -6,8 +6,12 @@ import {
 } from '../schemas/invitation.js';
 import {
   authResponseSchema,
+  confirmSsoLinkRequestSchema,
   loginRequestSchema,
   registerRequestSchema,
+  ssoConfigSchema,
+  ssoLinkSchema,
+  ssoStartSchema,
   updatePreferencesRequestSchema,
   userSchema,
 } from '../schemas/user.js';
@@ -16,6 +20,8 @@ import type {
   LoginRequest,
   LoginResult,
   RegisterRequest,
+  SsoConfig,
+  SsoLink,
   UpdatePreferencesRequest,
   User,
 } from '../types/user.js';
@@ -49,6 +55,76 @@ export function readSetCookie(response: Response): string[] {
  * Handles user registration, login, logout, and session management
  */
 export class AuthResource extends BaseResource {
+  /** Return the public SSO login configuration. */
+  async getSsoConfig(): Promise<Result<SsoConfig, RustrakError>> {
+    return this.request(
+      () => this.http.get('auth/sso/config'),
+      ssoConfigSchema,
+    );
+  }
+
+  /** Begin SSO and return the provider URL plus the encrypted state cookie. */
+  async startSso(): Promise<
+    Result<{ authorizationUrl: string; cookies: string[] }, RustrakError>
+  > {
+    return this.requestResponse(
+      () => this.http.post('auth/sso/start'),
+      async (response) => {
+        const cookies = readSetCookie(response);
+        const body = await this.readJson(response);
+        if (!body.success) return body;
+
+        const data = this.validate(body.data, ssoStartSchema);
+        if (!data.success) return data;
+
+        return Ok({
+          authorizationUrl: data.data.authorization_url,
+          cookies,
+        });
+      },
+    );
+  }
+
+  /** The account an SSO login is waiting to link, if any. */
+  async getSsoLink(): Promise<Result<SsoLink, RustrakError>> {
+    return this.request(() => this.http.get('auth/sso/link'), ssoLinkSchema);
+  }
+
+  /** Link the pending SSO identity with the account's password and sign in. */
+  async confirmSsoLink(
+    password: string,
+  ): Promise<Result<LoginResult, RustrakError>> {
+    const validatedInput = this.validateInput(
+      { password },
+      confirmSsoLinkRequestSchema,
+    );
+    if (!validatedInput.success) {
+      return validatedInput;
+    }
+
+    return this.requestResponse(
+      () => this.http.post('auth/sso/link', { json: validatedInput.data }),
+      (response) => this.readLoginResult(response),
+    );
+  }
+
+  /** Complete an OIDC callback and return the normal Rustrak session cookie. */
+  async completeSso(callback: {
+    code?: string;
+    state?: string;
+    error?: string;
+  }): Promise<Result<LoginResult, RustrakError>> {
+    const searchParams = new URLSearchParams();
+    if (callback.code) searchParams.set('code', callback.code);
+    if (callback.state) searchParams.set('state', callback.state);
+    if (callback.error) searchParams.set('error', callback.error);
+
+    return this.requestResponse(
+      () => this.http.get('auth/sso/callback', { searchParams }),
+      (response) => this.readLoginResult(response),
+    );
+  }
+
   /**
    * Register a new user account
    * Creates a new user and automatically logs them in (sets session cookie)

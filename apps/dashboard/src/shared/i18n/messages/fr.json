@@ -1260,6 +1260,10 @@
       "showPassword": "Afficher le mot de passe",
       "signingIn": "Connexion...",
       "login": "Se connecter",
+      "continueWithSso": "Continuer avec {provider}",
+      "ssoRedirecting": "Redirection...",
+      "ssoFailure": "L’authentification unique a échoué. Veuillez réessayer.",
+      "or": "ou",
       "invalidCredentials": "E-mail ou mot de passe incorrect",
       "failureNetwork": "Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.",
       "failureRateLimited": "Trop de tentatives de connexion. Attendez environ {duration} avant de réessayer.",
@@ -1270,6 +1274,24 @@
       "waitSeconds": "{count, plural, =1 {# seconde} other {# secondes}}",
       "waitMinutes": "{count, plural, =1 {# minute} other {# minutes}}",
       "waitHours": "{count, plural, =1 {# heure} other {# heures}}"
+    },
+    "link": {
+      "metaTitle": "Associer votre compte | Rustrak",
+      "title": "Associer votre compte",
+      "description": "Vous avez déjà un compte Rustrak avec {email}. Saisissez son mot de passe une fois pour l'associer à {provider}. Ensuite, {provider} suffira pour vous connecter.",
+      "emailLabel": "Compte",
+      "passwordLabel": "Mot de passe",
+      "passwordPlaceholder": "Votre mot de passe Rustrak",
+      "passwordRequired": "Saisissez votre mot de passe",
+      "submit": "Associer et se connecter",
+      "submitting": "Association...",
+      "invalidPassword": "Ce mot de passe est incorrect",
+      "alreadyLinked": "Ce compte {provider} est déjà associé à un autre compte Rustrak.",
+      "failure": "Impossible d'associer le compte. Réessayez.",
+      "cancel": "Utiliser un autre compte",
+      "expiredTitle": "Rien à associer",
+      "expiredDescription": "Cette demande a expiré ou a déjà été traitée. Reconnectez-vous pour recommencer.",
+      "backToLogin": "Retour à la connexion"
     }
   },
   "invite": {

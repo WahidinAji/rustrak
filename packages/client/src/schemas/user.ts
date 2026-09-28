@@ -61,3 +61,22 @@ export const registerRequestSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
+
+export const ssoConfigSchema = z.object({
+  enabled: z.boolean(),
+  provider_name: z.string().nullable(),
+});
+
+export const ssoStartSchema = z.object({
+  authorization_url: z.string().url(),
+});
+
+/** The account an SSO login matched, waiting for its password. */
+export const ssoLinkSchema = z.object({
+  email: z.string(),
+  provider_name: z.string(),
+});
+
+export const confirmSsoLinkRequestSchema = z.object({
+  password: z.string().min(1),
+});

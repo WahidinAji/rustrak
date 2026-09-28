@@ -1260,6 +1260,10 @@
       "showPassword": "Show password",
       "signingIn": "Signing in...",
       "login": "Login",
+      "continueWithSso": "Continue with {provider}",
+      "ssoRedirecting": "Redirecting...",
+      "ssoFailure": "Single sign-on failed. Please try again.",
+      "or": "or",
       "invalidCredentials": "Invalid email or password",
       "failureNetwork": "Could not reach the server. Check your connection and try again.",
       "failureRateLimited": "Too many login attempts. Wait about {duration} before trying again.",
@@ -1270,6 +1274,24 @@
       "waitSeconds": "{count, plural, =1 {# second} other {# seconds}}",
       "waitMinutes": "{count, plural, =1 {# minute} other {# minutes}}",
       "waitHours": "{count, plural, =1 {# hour} other {# hours}}"
+    },
+    "link": {
+      "metaTitle": "Link your account | Rustrak",
+      "title": "Link your account",
+      "description": "You already have a Rustrak account with {email}. Enter its password once to connect it to {provider}. After that, {provider} is enough to sign in.",
+      "emailLabel": "Account",
+      "passwordLabel": "Password",
+      "passwordPlaceholder": "Your Rustrak password",
+      "passwordRequired": "Enter your password",
+      "submit": "Link and sign in",
+      "submitting": "Linking...",
+      "invalidPassword": "That password is not correct",
+      "alreadyLinked": "This {provider} account is already linked to another Rustrak account.",
+      "failure": "Could not link the account. Try again.",
+      "cancel": "Use another account",
+      "expiredTitle": "Nothing to link",
+      "expiredDescription": "This request has expired or was already completed. Sign in again to start over.",
+      "backToLogin": "Back to login"
     }
   },
   "invite": {
