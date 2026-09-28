@@ -1,0 +1,271 @@
+# Single Sign-On (OIDC)
+
+Rustrak can sign people in through an OpenID Connect provider such as
+[Pocket ID](https://pocket-id.org), Authentik, Keycloak or Google. Instead of
+keeping a separate password for Rustrak, people press **Continue with
+Pocket ID** on the login page, prove who they are to the provider, and come
+back signed in.
+
+Why run it this way:
+
+- **One login for everything you host.** The same account opens Rustrak,
+  Grafana, Immich or anything else connected to the provider.
+- **One place to remove access.** Disable someone at the provider and they
+  can no longer sign in to Rustrak, or to anything else.
+- **Stronger sign-in for free.** Passkeys, two-factor and password rules are
+  the provider's job, and Rustrak inherits them.
+
+SSO is optional and sits beside password login: both keep working, and
+nothing changes until `OIDC_ISSUER_URL` is set.
+
+## How a login works
+
+```text
+ Browser                     Rustrak                       Provider
+    │  Continue with Pocket ID   │                             │
+    │ ─────────────────────────▶ │  state, nonce and PKCE      │
+    │                            │  kept in the session cookie │
+    │ ◀─ redirect to provider ── │                             │
+    │ ───────────────────────────────────────────────────────▶ │  sign in, consent
+    │ ◀──────────── redirect to /auth/sso/callback?code&state ─ │
+    │ ─────────────────────────▶ │ ── code + PKCE verifier ──▶ │
+    │                            │ ◀──── signed ID token ───── │
+    │                            │  checks signature, nonce,   │
+    │                            │  email; finds the account   │
+    │ ◀── signed in, go to / ─── │                             │
+```
+
+Each piece guards against something specific:
+
+| Piece | What it prevents |
+|---|---|
+| `state` | A forged callback that would sign you in to someone else's session |
+| `nonce` | An ID token issued for a different login being replayed into this one |
+| PKCE | A stolen authorization code being exchanged by anyone but Rustrak |
+| Signature check | A token that did not come from your provider |
+
+All three one-time values live in Rustrak's encrypted session cookie and are
+erased as soon as the callback reads them, so a callback URL cannot be used
+twice.
+
+Rustrak remembers each person by the provider's **issuer and subject**, an
+identifier that never changes. If someone's email changes at the provider,
+their next login still reaches the same Rustrak account.
+
+## Set up Pocket ID
+
+These steps assume Rustrak is served at `https://rustrak.example.com` and
+Pocket ID at `https://id.example.com`. Replace both with your own addresses.
+
+### 1. Create the client in Pocket ID
+
+In Pocket ID go to **Settings → Administration → OIDC Clients → Add OIDC
+Client** and fill in:
+
+- **Name:** `Rustrak`. This is what people see on Pocket ID's consent screen.
+- **Callback URL:** `https://rustrak.example.com/auth/sso/callback`, exactly.
+  It is the address Rustrak is reached at followed by `/auth/sso/callback`.
+- **PKCE:** on. Rustrak always sends it, so requiring it costs nothing.
+
+Save, then open the client's **Credentials** tab and add a client secret.
+Copy the **Client ID** and the **secret**.
+
+### 2. Let people use the client
+
+Open the client's **Allowed User Groups** tab. A new client admits nobody:
+either choose the groups that may use Rustrak, or press **Unrestricted** to
+let every Pocket ID user through. Skipping this step shows *"You are not
+allowed to access this service"* on Pocket ID after signing in.
+
+### 3. Check each user's email is verified
+
+Rustrak only trusts an email the provider marks as verified. In Pocket ID,
+open **Users**, edit each person and use the **Mark as verified** button next
+to the email. An unverified email is refused at login (see
+[Troubleshooting](#troubleshooting)).
+
+### 4. Configure Rustrak
+
+```bash
+OIDC_ISSUER_URL=https://id.example.com
+OIDC_CLIENT_ID=<client-id-from-pocket-id>
+OIDC_CLIENT_SECRET=<client-secret-from-pocket-id>
+OIDC_REDIRECT_URL=https://rustrak.example.com/auth/sso/callback
+OIDC_PROVIDER_NAME=Pocket ID
+# Your Pocket ID decides who has an account, so let new people in.
+OIDC_AUTO_PROVISION=true
+```
+
+Restart Rustrak. The log confirms it found the provider:
+
+```text
+INFO rustrak] OpenID Connect SSO enabled (Pocket ID)
+```
+
+and the login page shows **Continue with Pocket ID** above the password form.
+If the provider cannot be reached or the configuration is incomplete, Rustrak
+refuses to start and says why, rather than showing a button that cannot work.
+
+## Who can sign in
+
+The first time someone signs in through SSO, one of three things happens.
+
+**They are already linked.** They go straight in. This is every login after
+the first.
+
+**An account already has their email.** This is the usual case: you set up
+SSO on an instance where people, the administrator at least, already sign in
+with a password. Rustrak shows a **Link your account** page and asks for that
+account's password once. Given correctly, the SSO identity is attached and
+from then on the provider alone is enough. Asking for the password proves the
+account belongs to the person signing in, so this is safe whatever the
+provider.
+
+**Nobody has their email.** With `OIDC_AUTO_PROVISION=true` an account is
+created for them. The first account on an empty installation becomes an
+administrator; every later one is a member who sees nothing until added to a
+team or project. With provisioning off, which is the default, they are turned
+away and an administrator has to invite them first.
+
+### Choosing the switches for your provider
+
+| Provider | `OIDC_AUTO_PROVISION` | `OIDC_ALLOWED_DOMAINS` | `OIDC_LINK_EXISTING_ACCOUNTS` |
+|---|---|---|---|
+| Your own Pocket ID, Authentik or Keycloak | `true` | optional | optional |
+| Google Workspace or Microsoft Entra | `true` | **your company domain** | leave `false` |
+| Public Google accounts | leave `false` | leave empty | leave `false` |
+
+- **`OIDC_AUTO_PROVISION`** lets in anyone the provider vouches for. That is
+  exactly what you want when you control who has an account at the provider,
+  and exactly what you do not want with a provider anyone can sign up to.
+  Rustrak logs a warning at startup when it is on without a domain allowlist.
+- **`OIDC_ALLOWED_DOMAINS`** limits SSO to emails at the listed domains, for
+  example `example.com,subsidiary.example`. It applies to every login,
+  including people already linked.
+- **`OIDC_LINK_EXISTING_ACCOUNTS`** skips the password question and attaches
+  the identity straight to the matching account, provided the email is
+  verified. Only turn it on with a provider whose users cannot pick an email
+  they do not own. With a provider that lets people choose their address, it
+  would let someone take over an existing account by claiming its email.
+
+## Other providers
+
+Any provider that supports OpenID Connect discovery works. Register
+`https://<your-rustrak>/auth/sso/callback` as the redirect URI and point
+`OIDC_ISSUER_URL` at the provider's issuer:
+
+| Provider | `OIDC_ISSUER_URL` |
+|---|---|
+| Pocket ID | `https://id.example.com` |
+| Authentik | `https://auth.example.com/application/o/<application-slug>/` |
+| Keycloak | `https://keycloak.example.com/realms/<realm>` |
+| Google | `https://accounts.google.com` |
+
+The issuer is the address that serves
+`/.well-known/openid-configuration`. Opening that URL in a browser is a quick
+way to check you have the right one: its `issuer` field must match
+`OIDC_ISSUER_URL` exactly.
+
+Rustrak asks for the `openid email profile` scopes. The provider has to
+return an `email` claim, and an `email_verified` claim set to true unless you
+set `OIDC_REQUIRE_EMAIL_VERIFIED=false`.
+
+## Configuration reference
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OIDC_ISSUER_URL` | *(disabled)* | Provider issuer URL used for discovery. Setting it turns SSO on |
+| `OIDC_CLIENT_ID` | *(required)* | Client ID issued to Rustrak |
+| `OIDC_CLIENT_SECRET` | *(required)* | Client secret issued to Rustrak |
+| `OIDC_REDIRECT_URL` | *(required)* | Exact callback URL, ending in `/auth/sso/callback` |
+| `OIDC_PROVIDER_NAME` | `SSO` | Label on the login button |
+| `OIDC_SCOPES` | `openid email profile` | Space-separated scopes |
+| `OIDC_AUTO_PROVISION` | `false` | Create an account for someone whose email has none |
+| `OIDC_LINK_EXISTING_ACCOUNTS` | `false` | Link to an existing account without asking for its password |
+| `OIDC_REQUIRE_EMAIL_VERIFIED` | `true` | Refuse identities whose email the provider has not verified |
+| `OIDC_ALLOWED_DOMAINS` | *(all)* | Comma-separated email domains allowed to use SSO |
+
+The booleans accept `true/false`, `1/0`, `yes/no` and `on/off`. An empty value
+means unset. Anything else stops Rustrak at startup instead of silently
+falling back to the default.
+
+The issuer and every endpoint it advertises must use HTTPS. The one exception
+is a provider on the same machine (`localhost`, `127.0.0.1` or `::1`), which
+may use plain HTTP.
+
+## Troubleshooting
+
+When an SSO login fails, the login page only says it failed, so it tells a
+stranger nothing about your accounts. The reason is in Rustrak's log, on a
+line that starts with `SSO browser callback failed:`.
+
+| Log message | Cause | Fix |
+|---|---|---|
+| `SSO provider did not verify the email address` | The provider sent `email_verified: false` | Verify the email at the provider. In Pocket ID: **Users → edit → Mark as verified** |
+| `No Rustrak account is linked to this SSO identity` | Nobody has this email and provisioning is off | Invite the person, or set `OIDC_AUTO_PROVISION=true` |
+| `Email domain is not allowed to use SSO` | The email is outside `OIDC_ALLOWED_DOMAINS` | Add the domain, or use an account at an allowed one |
+| `SSO provider did not supply an email address` | The provider returned no `email` claim | Make sure `OIDC_SCOPES` includes `email` and the provider releases it |
+| `SSO session expired; please try again` | The callback arrived without the values `/auth/sso/start` stored | See below |
+| `SSO callback state did not match` | The callback belongs to a different login attempt | Start again from the login page |
+| `SSO authorization was denied` | The provider returned an error, for example the person declined consent | Try again, and check the provider's own log |
+| `SSO authentication failed` | The provider refused the code exchange, usually a wrong client secret | Check `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`. A line starting `OIDC code exchange failed` carries the provider's answer |
+| `SSO identity token is invalid` | The ID token failed its checks: wrong audience, issuer or signature | Check `OIDC_CLIENT_ID` and that `OIDC_ISSUER_URL` matches the `issuer` in the discovery document |
+| `Account is disabled` | The matching Rustrak account is deactivated | Reactivate it in Rustrak |
+
+**`SSO session expired`** almost always means the browser did not send
+Rustrak's session cookie back on the callback. Check that:
+
+- `OIDC_REDIRECT_URL` uses the **same host** you open Rustrak on. A dashboard
+  opened at `http://127.0.0.1:8080` with a redirect to
+  `http://localhost:8080/...` loses the cookie, because the browser treats
+  them as different sites.
+- `SESSION_SECRET_KEY` is set. Without it Rustrak makes a new key at every
+  start, and a restart between leaving for the provider and coming back
+  invalidates the cookie.
+- The link was not opened twice. A callback URL works exactly once.
+
+**Errors shown by the provider, not by Rustrak:**
+
+- *"You are not allowed to access this service"* (Pocket ID): the client has
+  no allowed user groups. See [step 2](#2-let-people-use-the-client).
+- *"Invalid redirect URI"* or similar: the callback URL registered at the
+  provider differs from `OIDC_REDIRECT_URL`. They must match character for
+  character, including `http` versus `https` and any trailing slash.
+
+**Rustrak will not start:**
+
+- `OIDC_CLIENT_ID is required when OIDC_ISSUER_URL is configured`: set all
+  four of `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` and
+  `OIDC_REDIRECT_URL`, or none of them.
+- `OIDC discovery failed`: Rustrak could not read
+  `<OIDC_ISSUER_URL>/.well-known/openid-configuration`. Check the URL and that
+  the Rustrak container can reach the provider over the network.
+- `must use HTTPS`: the issuer or one of its endpoints is plain HTTP on a
+  host other than `localhost`.
+
+## Try it locally
+
+You can run the whole flow on your machine with Pocket ID in Docker. Plain
+HTTP is accepted because both run on `localhost`.
+
+```bash
+docker run -d --name pocket-id -p 1411:1411 \
+  -e APP_URL=http://localhost:1411 \
+  -e ENCRYPTION_KEY=$(openssl rand -hex 32) \
+  -v pocket-id-data:/app/data \
+  ghcr.io/pocket-id/pocket-id
+```
+
+1. Open `http://localhost:1411/setup` and create the first Pocket ID user.
+   You can skip adding a passkey: `docker exec pocket-id /app/pocket-id
+   one-time-access-token <username>` prints a one-time sign-in link whenever
+   you need one.
+2. Follow [Set up Pocket ID](#set-up-pocket-id) with
+   `http://localhost:8080/auth/sso/callback` as the callback URL.
+3. Start Rustrak with `OIDC_ISSUER_URL=http://localhost:1411`,
+   `OIDC_REDIRECT_URL=http://localhost:8080/auth/sso/callback` and the client
+   ID and secret, then open `http://localhost:8080/login`. Use `localhost`,
+   not `127.0.0.1`, for the reason in [Troubleshooting](#troubleshooting).
+
+To remove it afterwards: `docker rm -f pocket-id && docker volume rm
+pocket-id-data`.
