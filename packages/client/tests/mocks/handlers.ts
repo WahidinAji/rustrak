@@ -1216,6 +1216,18 @@ export const handlers = [
     });
   }),
 
+  http.post(`${BASE_URL}/auth/me/password`, async ({ request }) => {
+    const body = (await request.json()) as { current_password?: string };
+    if (body.current_password !== 'password123') {
+      return appErrorResponse(
+        'ValidationError',
+        'Validation error: Current password is incorrect',
+        [{ field: 'current_password', code: 'invalid' }],
+      );
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
+
   // Public invitation lookup (accept page)
   http.get(`${BASE_URL}/auth/invitation/:token`, ({ params }) => {
     const { token } = params;

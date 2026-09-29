@@ -80,3 +80,8 @@ export const ssoLinkSchema = z.object({
 export const confirmSsoLinkRequestSchema = z.object({
   password: z.string().min(1),
 });
+
+export const changePasswordRequestSchema = z.object({
+  current_password: z.string().min(1),
+  new_password: z.string().min(1),
+});

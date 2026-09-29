@@ -7,7 +7,9 @@ use chrono::{DateTime, Utc};
 use crate::auth::{self, AuthenticatedUser, OidcService};
 use crate::db::DbPool;
 use crate::error::{AppError, AppResult, FieldErrorCode};
-use crate::models::{AcceptInvitation, CreateUserRequest, LoginRequest, User};
+use crate::models::{
+    AcceptInvitation, ChangePasswordRequest, CreateUserRequest, LoginRequest, User,
+};
 use crate::services::OidcOutcome;
 use crate::services::{InvitationService, UsersService};
 
@@ -681,6 +683,35 @@ pub async fn update_current_user(
     Ok(HttpResponse::Ok().json(UserResponse::from(updated)))
 }
 
+#[cfg_attr(feature = "openapi", utoipa::path(
+    post,
+    path = "/auth/me/password",
+    tag = "Auth",
+    request_body = ChangePasswordRequest,
+    responses(
+        (status = 204, description = "Password changed"),
+        (status = 400, description = "Wrong current password or empty new password", body = crate::error::ErrorResponse),
+        (status = 401, description = "Not authenticated", body = crate::error::ErrorResponse),
+    ),
+    security(("session_cookie" = [])),
+))]
+/// POST /auth/me/password
+/// Change the current user's password
+pub async fn change_password(
+    user: AuthenticatedUser,
+    pool: web::Data<DbPool>,
+    body: web::Json<ChangePasswordRequest>,
+) -> AppResult<HttpResponse> {
+    UsersService::change_password(
+        pool.get_ref(),
+        user.0,
+        &body.current_password,
+        &body.new_password,
+    )
+    .await?;
+    Ok(HttpResponse::NoContent().finish())
+}
+
 #[cfg(feature = "openapi")]
 #[derive(OpenApi)]
 #[openapi(
@@ -696,11 +727,13 @@ pub async fn update_current_user(
         confirm_sso_link,
         logout,
         get_current_user,
-        update_current_user
+        update_current_user,
+        change_password
     ),
     components(schemas(
         crate::models::CreateUserRequest,
         crate::models::LoginRequest,
+        crate::models::ChangePasswordRequest,
         crate::models::AcceptInvitation,
         AuthResponse,
         UserResponse,
@@ -729,6 +762,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/sso/link", web::post().to(confirm_sso_link))
             .route("/logout", web::post().to(logout))
             .route("/me", web::get().to(get_current_user))
-            .route("/me", web::patch().to(update_current_user)),
+            .route("/me", web::patch().to(update_current_user))
+            .route("/me/password", web::post().to(change_password)),
     );
 }

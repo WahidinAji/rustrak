@@ -30,7 +30,9 @@
     "close": "Close",
     "sidebar": "Sidebar",
     "sidebarMobileDescription": "Displays the mobile sidebar.",
-    "toggleSidebar": "Toggle Sidebar"
+    "toggleSidebar": "Toggle Sidebar",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password"
   },
   "theme": {
     "light": "Light",
@@ -1644,7 +1646,22 @@
       "role": "Role",
       "administrator": "Administrator",
       "regional": "Language and region",
-      "regionalDescription": "How Rustrak reads to you, saved to your account"
+      "regionalDescription": "How Rustrak reads to you, saved to your account",
+      "password": {
+        "title": "Password",
+        "current": "Current password",
+        "new": "New password",
+        "confirm": "Confirm new password",
+        "currentRequired": "Enter your current password.",
+        "newRequired": "Enter a new password.",
+        "mismatch": "The passwords do not match.",
+        "submit": "Change password",
+        "submitting": "Changing…",
+        "changed": "Password changed",
+        "change": "Change password",
+        "dialogDescription": "Enter your current password, then the new one twice.",
+        "cancel": "Cancel"
+      }
     },
     "appearance": {
       "meta": {

@@ -1323,6 +1323,132 @@ async fn test_patch_me_unauthenticated_is_rejected() {
 }
 
 // =============================================================================
+// Change password tests
+// =============================================================================
+
+/// Signs in as `email` and posts `body` to `/auth/me/password`, returning the
+/// status and the body (`Null` when there is none).
+async fn change_password_as(
+    pool: &rustrak::db::DbPool,
+    email: &str,
+    password: &str,
+    body: Value,
+) -> (u16, Value) {
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(create_test_config()))
+            .wrap(
+                SessionMiddleware::builder(CookieSessionStore::default(), Key::from(&[0u8; 64]))
+                    .cookie_secure(false)
+                    .build(),
+            )
+            .configure(routes::auth::configure),
+    )
+    .await;
+
+    let login = test::TestRequest::post()
+        .uri("/auth/login")
+        .set_json(json!({ "email": email, "password": password }))
+        .to_request();
+    let resp = test::call_service(&app, login).await;
+    let cookie = resp.response().cookies().next().unwrap().into_owned();
+
+    let req = test::TestRequest::post()
+        .uri("/auth/me/password")
+        .cookie(cookie)
+        .set_json(body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    let status = resp.status().as_u16();
+    let bytes = test::read_body(resp).await;
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+#[actix_web::test]
+async fn test_change_password_replaces_the_login_password() {
+    let db = TestDb::new().await;
+    create_test_user(&db.pool, "pw1@example.com", "old-password", false).await;
+
+    let (status, _) = change_password_as(
+        &db.pool,
+        "pw1@example.com",
+        "old-password",
+        json!({ "current_password": "old-password", "new_password": "new-password" }),
+    )
+    .await;
+    assert_eq!(status, 204);
+
+    assert_eq!(
+        login_as(&db.pool, "pw1@example.com", "old-password")
+            .await
+            .0,
+        401
+    );
+    assert_eq!(
+        login_as(&db.pool, "pw1@example.com", "new-password")
+            .await
+            .0,
+        200
+    );
+}
+
+#[actix_web::test]
+async fn test_change_password_requires_the_current_password() {
+    let db = TestDb::new().await;
+    create_test_user(&db.pool, "pw2@example.com", "old-password", false).await;
+
+    let (status, body) = change_password_as(
+        &db.pool,
+        "pw2@example.com",
+        "old-password",
+        json!({ "current_password": "not-it", "new_password": "new-password" }),
+    )
+    .await;
+    assert_eq!(status, 400);
+    assert_eq!(
+        body["error"]["fields"],
+        json!([{ "field": "current_password", "code": "invalid" }])
+    );
+
+    assert_eq!(
+        login_as(&db.pool, "pw2@example.com", "old-password")
+            .await
+            .0,
+        200
+    );
+}
+
+#[actix_web::test]
+async fn test_change_password_rejects_an_empty_new_password() {
+    let db = TestDb::new().await;
+    create_test_user(&db.pool, "pw3@example.com", "old-password", false).await;
+
+    let (status, body) = change_password_as(
+        &db.pool,
+        "pw3@example.com",
+        "old-password",
+        json!({ "current_password": "old-password", "new_password": "" }),
+    )
+    .await;
+    assert_eq!(status, 400);
+    assert_eq!(
+        body["error"]["fields"],
+        json!([{ "field": "new_password", "code": "required" }])
+    );
+
+    assert_eq!(
+        login_as(&db.pool, "pw3@example.com", "old-password")
+            .await
+            .0,
+        200
+    );
+}
+
+// =============================================================================
 // OpenID Connect provisioning tests
 // =============================================================================
 

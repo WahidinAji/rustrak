@@ -1,6 +1,6 @@
 use crate::auth::OidcIdentity;
 use crate::db::DbPool;
-use crate::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult, FieldErrorCode};
 use crate::models::{CreateUserRequest, User, UserRole};
 
 pub struct UsersService;
@@ -475,6 +475,42 @@ impl UsersService {
                 .execute(pool)
                 .await?;
         }
+        Ok(())
+    }
+
+    pub async fn change_password(
+        pool: &DbPool,
+        user: User,
+        current_password: &str,
+        new_password: &str,
+    ) -> AppResult<()> {
+        // Same rule as accepting an invitation: required, no length policy.
+        if new_password.is_empty() {
+            return Err(AppError::Validation("New password is required".to_string())
+                .with_field("new_password", FieldErrorCode::Required));
+        }
+
+        let user_id = user.id;
+        // Argon2 off the Actix worker, as the SSO link confirmation does.
+        let (current_password, new_password) =
+            (current_password.to_string(), new_password.to_string());
+        let password_hash = tokio::task::spawn_blocking(move || {
+            if !user.verify_password(&current_password)? {
+                return Err(
+                    AppError::Validation("Current password is incorrect".to_string())
+                        .with_field("current_password", FieldErrorCode::Invalid),
+                );
+            }
+            User::hash_password(&new_password)
+        })
+        .await
+        .map_err(|e| AppError::Internal(format!("Password hashing task failed: {e}")))??;
+
+        sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+            .bind(password_hash)
+            .bind(user_id)
+            .execute(pool)
+            .await?;
         Ok(())
     }
 
