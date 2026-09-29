@@ -1,5 +1,11 @@
 # docs
 
+## 0.15.12
+
+### Patch Changes
+
+- [`443eaef`](https://github.com/rustrak/rustrak/commit/443eaef10eca0d853dc10a9f1601835331da1947) Thanks [@AbianS](https://github.com/AbianS)! - Search works again: the build now generates the search index the site loads, so searching the documentation returns results instead of an error.
+
 ## 0.15.11
 
 ### Patch Changes
