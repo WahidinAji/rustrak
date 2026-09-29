@@ -1448,6 +1448,34 @@ async fn test_change_password_rejects_an_empty_new_password() {
     );
 }
 
+/// Two overlapping requests both load the user before either writes. The one
+/// that lands second verified a hash that is no longer stored, so it must not
+/// overwrite the first change.
+#[actix_web::test]
+async fn test_change_password_refuses_a_stale_verification() {
+    let db = TestDb::new().await;
+    create_test_user(&db.pool, "pw4@example.com", "old-password", false).await;
+    let first = UsersService::get_by_email(&db.pool, "pw4@example.com")
+        .await
+        .unwrap()
+        .unwrap();
+    let second = first.clone();
+
+    UsersService::change_password(&db.pool, first, "old-password", "owner-password")
+        .await
+        .unwrap();
+    let stale =
+        UsersService::change_password(&db.pool, second, "old-password", "attacker-password").await;
+    assert!(stale.is_err());
+
+    assert_eq!(
+        login_as(&db.pool, "pw4@example.com", "owner-password")
+            .await
+            .0,
+        200
+    );
+}
+
 // =============================================================================
 // OpenID Connect provisioning tests
 // =============================================================================

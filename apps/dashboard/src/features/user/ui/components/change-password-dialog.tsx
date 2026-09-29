@@ -72,9 +72,16 @@ export function ChangePasswordDialog() {
   });
 
   // Typed passwords must not survive the dialog closing, whichever way it closes.
+  const close = () => {
+    form.reset(EMPTY);
+    setOpen(false);
+  };
+
+  // Stays open while a request is in flight, so its outcome cannot land on a
+  // later opening of the dialog.
   const onOpenChange = (next: boolean) => {
-    if (!next) form.reset(EMPTY);
-    setOpen(next);
+    if (next) setOpen(true);
+    else if (!isPending) close();
   };
 
   const onSubmit = (data: ChangePasswordFormData) => {
@@ -95,7 +102,7 @@ export function ChangePasswordDialog() {
         return;
       }
 
-      onOpenChange(false);
+      close();
       toast.success(t('account.password.changed'));
     });
   };
@@ -144,7 +151,10 @@ export function ChangePasswordDialog() {
             <FormRootError />
 
             <DialogFooter>
-              <DialogClose render={<Button variant="outline" type="button" />}>
+              <DialogClose
+                disabled={isPending}
+                render={<Button variant="outline" type="button" />}
+              >
                 {t('account.password.cancel')}
               </DialogClose>
               <Button type="submit" disabled={isPending}>

@@ -382,6 +382,26 @@ describe('AuthResource Integration', () => {
         { field: 'current_password', code: 'invalid' },
       ]);
     });
+
+    it('should not retry, since a retry would send an already replaced password', async () => {
+      let calls = 0;
+      server.use(
+        http.post('http://localhost:8080/auth/me/password', () => {
+          calls += 1;
+          return HttpResponse.json({ error: 'Bad gateway' }, { status: 502 });
+        }),
+      );
+
+      const error = expectErr(
+        await client.auth.changePassword({
+          current_password: 'password123',
+          new_password: 'new-password',
+        }),
+      );
+
+      expect(error.kind).toBe('server_error');
+      expect(calls).toBe(1);
+    });
   });
 
   describe('getCurrentUser()', () => {

@@ -491,6 +491,7 @@ impl UsersService {
         }
 
         let user_id = user.id;
+        let verified_hash = user.password_hash.clone();
         // Argon2 off the Actix worker, as the SSO link confirmation does.
         let (current_password, new_password) =
             (current_password.to_string(), new_password.to_string());
@@ -506,11 +507,21 @@ impl UsersService {
         .await
         .map_err(|e| AppError::Internal(format!("Password hashing task failed: {e}")))??;
 
-        sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
-            .bind(password_hash)
-            .bind(user_id)
-            .execute(pool)
-            .await?;
+        // Only the hash that was verified may be replaced: an overlapping
+        // request that checked the same old password must not win.
+        let updated =
+            sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2 AND password_hash = $3")
+                .bind(password_hash)
+                .bind(user_id)
+                .bind(verified_hash)
+                .execute(pool)
+                .await?;
+        if updated.rows_affected() == 0 {
+            return Err(
+                AppError::Validation("Current password is incorrect".to_string())
+                    .with_field("current_password", FieldErrorCode::Invalid),
+            );
+        }
         Ok(())
     }
 

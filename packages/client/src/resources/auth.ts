@@ -235,8 +235,13 @@ export class AuthResource extends BaseResource {
     );
     if (!validatedInput.success) return validatedInput;
 
+    // No retry: if the first attempt landed, a retry sends a password that is
+    // no longer current and reports failure for a change that succeeded.
     return this.requestVoid(() =>
-      this.http.post('auth/me/password', { json: validatedInput.data }),
+      this.http.post('auth/me/password', {
+        json: validatedInput.data,
+        retry: 0,
+      }),
     );
   }
 
