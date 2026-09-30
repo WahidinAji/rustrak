@@ -30,7 +30,9 @@
     "close": "Fermer",
     "sidebar": "Panneau latéral",
     "sidebarMobileDescription": "Affiche le panneau latéral mobile.",
-    "toggleSidebar": "Basculer le panneau latéral"
+    "toggleSidebar": "Basculer le panneau latéral",
+    "showPassword": "Afficher le mot de passe",
+    "hidePassword": "Masquer le mot de passe"
   },
   "theme": {
     "light": "Clair",
@@ -1644,7 +1646,22 @@
       "role": "Rôle",
       "administrator": "Administrateur",
       "regional": "Langue et région",
-      "regionalDescription": "Comment Rustrak se lit pour vous, enregistré sur votre compte"
+      "regionalDescription": "Comment Rustrak se lit pour vous, enregistré sur votre compte",
+      "password": {
+        "title": "Mot de passe",
+        "current": "Mot de passe actuel",
+        "new": "Nouveau mot de passe",
+        "confirm": "Confirmez le nouveau mot de passe",
+        "currentRequired": "Saisissez votre mot de passe actuel.",
+        "newRequired": "Saisissez un nouveau mot de passe.",
+        "mismatch": "Les mots de passe ne correspondent pas.",
+        "submit": "Modifier le mot de passe",
+        "submitting": "Modification…",
+        "changed": "Mot de passe modifié",
+        "change": "Modifier le mot de passe",
+        "dialogDescription": "Saisissez votre mot de passe actuel, puis le nouveau deux fois.",
+        "cancel": "Annuler"
+      }
     },
     "appearance": {
       "meta": {

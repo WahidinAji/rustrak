@@ -126,4 +126,4 @@ pub use transaction::{
     span_attributes, SpanDetailResponse, SpanResponse, TransactionDetailResponse,
     TransactionResponse, TransactionStatsResponse,
 };
-pub use user::{CreateUserRequest, LoginRequest, User, UserRole};
+pub use user::{ChangePasswordRequest, CreateUserRequest, LoginRequest, User, UserRole};

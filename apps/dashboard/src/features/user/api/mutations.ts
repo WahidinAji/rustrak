@@ -164,6 +164,15 @@ export async function updatePreferences(preferences: {
   return Ok(undefined);
 }
 
+/** Replace the signed-in user's password, given the current one. */
+export async function changePassword(request: {
+  current_password: string;
+  new_password: string;
+}): Promise<Result<void, RustrakError>> {
+  const client = await createClient();
+  return client.auth.changePassword(request);
+}
+
 /**
  * Permanently remove a user from the instance.
  *

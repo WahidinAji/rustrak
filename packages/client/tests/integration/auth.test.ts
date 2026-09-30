@@ -359,6 +359,51 @@ describe('AuthResource Integration', () => {
     });
   });
 
+  describe('changePassword()', () => {
+    it('should succeed with no body when the current password matches', async () => {
+      const result = await client.auth.changePassword({
+        current_password: 'password123',
+        new_password: 'new-password',
+      });
+
+      expect(expectOk(result)).toBeUndefined();
+    });
+
+    it('should name current_password when the server rejects it', async () => {
+      const error = expectErr(
+        await client.auth.changePassword({
+          current_password: 'wrong',
+          new_password: 'new-password',
+        }),
+      );
+
+      expect(error.kind).toBe('validation');
+      expect(error.kind === 'validation' && error.fields).toEqual([
+        { field: 'current_password', code: 'invalid' },
+      ]);
+    });
+
+    it('should not retry, since a retry would send an already replaced password', async () => {
+      let calls = 0;
+      server.use(
+        http.post('http://localhost:8080/auth/me/password', () => {
+          calls += 1;
+          return HttpResponse.json({ error: 'Bad gateway' }, { status: 502 });
+        }),
+      );
+
+      const error = expectErr(
+        await client.auth.changePassword({
+          current_password: 'password123',
+          new_password: 'new-password',
+        }),
+      );
+
+      expect(error.kind).toBe('server_error');
+      expect(calls).toBe(1);
+    });
+  });
+
   describe('getCurrentUser()', () => {
     it('should get current authenticated user', async () => {
       // First login to set session

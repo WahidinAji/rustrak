@@ -6,6 +6,7 @@ import {
 } from '../schemas/invitation.js';
 import {
   authResponseSchema,
+  changePasswordRequestSchema,
   confirmSsoLinkRequestSchema,
   loginRequestSchema,
   registerRequestSchema,
@@ -17,6 +18,7 @@ import {
 } from '../schemas/user.js';
 import type { AcceptInvitation, InvitationInfo } from '../types/invitation.js';
 import type {
+  ChangePasswordRequest,
   LoginRequest,
   LoginResult,
   RegisterRequest,
@@ -220,6 +222,26 @@ export class AuthResource extends BaseResource {
     return this.request(
       () => this.http.patch('auth/me', { json: validatedInput.data }),
       userSchema,
+    );
+  }
+
+  /** Replaces the signed-in user's password, given the current one. */
+  async changePassword(
+    request: ChangePasswordRequest,
+  ): Promise<Result<void, RustrakError>> {
+    const validatedInput = this.validateInput(
+      request,
+      changePasswordRequestSchema,
+    );
+    if (!validatedInput.success) return validatedInput;
+
+    // No retry: if the first attempt landed, a retry sends a password that is
+    // no longer current and reports failure for a change that succeeded.
+    return this.requestVoid(() =>
+      this.http.post('auth/me/password', {
+        json: validatedInput.data,
+        retry: 0,
+      }),
     );
   }
 

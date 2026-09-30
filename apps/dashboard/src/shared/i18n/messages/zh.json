@@ -30,7 +30,9 @@
     "close": "关闭",
     "sidebar": "侧边栏",
     "sidebarMobileDescription": "显示移动端侧边栏。",
-    "toggleSidebar": "切换侧边栏"
+    "toggleSidebar": "切换侧边栏",
+    "showPassword": "显示密码",
+    "hidePassword": "隐藏密码"
   },
   "theme": {
     "light": "浅色",
@@ -1644,7 +1646,22 @@
       "role": "角色",
       "administrator": "管理员",
       "regional": "语言与地区",
-      "regionalDescription": "Rustrak 以何种方式呈现给您，已保存到您的账户"
+      "regionalDescription": "Rustrak 以何种方式呈现给您，已保存到您的账户",
+      "password": {
+        "title": "密码",
+        "current": "当前密码",
+        "new": "新密码",
+        "confirm": "确认新密码",
+        "currentRequired": "请输入当前密码。",
+        "newRequired": "请输入新密码。",
+        "mismatch": "两次输入的密码不一致。",
+        "submit": "更改密码",
+        "submitting": "正在更改…",
+        "changed": "密码已更改",
+        "change": "更改密码",
+        "dialogDescription": "输入当前密码，然后输入两次新密码。",
+        "cancel": "取消"
+      }
     },
     "appearance": {
       "meta": {

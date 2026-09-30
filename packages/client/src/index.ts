@@ -59,6 +59,7 @@ export type {
   AuthTokenCreated,
   BulkDeleteIssues,
   BulkUpdateIssues,
+  ChangePasswordRequest,
   ChunkUploadCapability,
   CleanupCounts,
   CleanupOptions,

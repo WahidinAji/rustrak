@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
+import { ChangePasswordDialog } from '@/features/user/ui/components/change-password-dialog';
 import { LanguageSelector } from '@/features/user/ui/components/language-selector';
 import { TimeZoneSelector } from '@/features/user/ui/components/time-zone-selector';
 import { translator } from '@/shared/i18n/intl';
@@ -65,6 +66,14 @@ function AccountPage() {
                 </p>
               </div>
             )}
+            <div className="space-y-2">
+              <Label className="text-muted-foreground">
+                {t('account.password.title')}
+              </Label>
+              <div>
+                <ChangePasswordDialog />
+              </div>
+            </div>
           </CardContent>
         </Card>
 

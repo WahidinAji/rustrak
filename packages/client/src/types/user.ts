@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import type {
   authResponseSchema,
+  changePasswordRequestSchema,
   loginRequestSchema,
   loginResultSchema,
   registerRequestSchema,
@@ -24,6 +25,8 @@ export type User = z.infer<typeof userSchema>;
 export type UpdatePreferencesRequest = z.infer<
   typeof updatePreferencesRequestSchema
 >;
+
+export type ChangePasswordRequest = z.infer<typeof changePasswordRequestSchema>;
 
 /**
  * AuthResponse - returned after successful login or registration

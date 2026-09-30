@@ -30,7 +30,9 @@
     "close": "Închide",
     "sidebar": "Bară laterală",
     "sidebarMobileDescription": "Afișează bara laterală pentru mobil.",
-    "toggleSidebar": "Comută bara laterală"
+    "toggleSidebar": "Comută bara laterală",
+    "showPassword": "Arată parola",
+    "hidePassword": "Ascunde parola"
   },
   "theme": {
     "light": "Luminos",
@@ -1644,7 +1646,22 @@
       "role": "Rol",
       "administrator": "Administrator",
       "regional": "Limbă și regiune",
-      "regionalDescription": "Cum citește Rustrak pentru tine, salvat în contul tău"
+      "regionalDescription": "Cum citește Rustrak pentru tine, salvat în contul tău",
+      "password": {
+        "title": "Parolă",
+        "current": "Parola actuală",
+        "new": "Parola nouă",
+        "confirm": "Confirmă parola nouă",
+        "currentRequired": "Introdu parola actuală.",
+        "newRequired": "Introdu o parolă nouă.",
+        "mismatch": "Parolele nu se potrivesc.",
+        "submit": "Schimbă parola",
+        "submitting": "Se schimbă…",
+        "changed": "Parola a fost schimbată",
+        "change": "Schimbă parola",
+        "dialogDescription": "Introdu parola actuală, apoi pe cea nouă de două ori.",
+        "cancel": "Anulează"
+      }
     },
     "appearance": {
       "meta": {
