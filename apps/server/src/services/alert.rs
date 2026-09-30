@@ -518,6 +518,61 @@ impl AlertService {
         )
     }
 
+    // Shared by the production transaction and deterministic database tests.
+    async fn reserve_cooldown(
+        tx: &mut sqlx::Transaction<'_, crate::db::Db>,
+        rule: &AlertRule,
+        now: chrono::DateTime<Utc>,
+    ) -> AppResult<bool> {
+        // The row owns both the zero bypass and expiry: an administrator may
+        // have changed the cooldown since trigger_alert loaded the rule.
+        #[cfg(feature = "postgres")]
+        let updated = sqlx::query(
+            r#"
+            UPDATE alert_rules
+            SET last_triggered_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+              AND (cooldown_minutes <= 0 OR last_triggered_at IS NULL
+                   OR last_triggered_at < $2::timestamptz - make_interval(mins => cooldown_minutes))
+            "#,
+        )
+        .bind(rule.id)
+        .bind(now)
+        .execute(&mut **tx)
+        .await?;
+
+        #[cfg(feature = "sqlite")]
+        let updated = sqlx::query(
+            r#"
+            UPDATE alert_rules
+            SET last_triggered_at = datetime('now')
+            WHERE id = $1
+              AND (cooldown_minutes <= 0 OR last_triggered_at IS NULL
+                   OR datetime(last_triggered_at) < datetime($2, '-' || cooldown_minutes || ' minutes'))
+            "#,
+        )
+        .bind(rule.id)
+        .bind(now.naive_utc())
+        .execute(&mut **tx)
+        .await?;
+
+        Ok(updated.rows_affected() != 0)
+    }
+
+    /// Runs the production reservation with a controlled clock and rule snapshot.
+    #[cfg(feature = "test-seams")]
+    #[doc(hidden)]
+    pub async fn reserve_cooldown_at_for_test(
+        pool: &DbPool,
+        rule: &AlertRule,
+        now: chrono::DateTime<Utc>,
+    ) -> AppResult<bool> {
+        let mut tx = pool.begin().await?;
+        let reserved = Self::reserve_cooldown(&mut tx, rule, now).await?;
+        tx.commit().await?;
+        Ok(reserved)
+    }
+
     /// Core alert triggering logic
     async fn trigger_alert(
         pool: &DbPool,
@@ -615,38 +670,10 @@ impl AlertService {
         );
 
         // 4. Reserve the cooldown and record every delivery atomically.
-        let cooldown_threshold = Utc::now() - Duration::minutes(rule.cooldown_minutes as i64);
+        // Zero disables suppression, including same-second SQLite timestamps or
+        // a backward clock adjustment. Event idempotency still prevents replays.
         let mut tx = pool.begin().await?;
-
-        #[cfg(feature = "postgres")]
-        let updated = sqlx::query(
-            r#"
-            UPDATE alert_rules
-            SET last_triggered_at = CURRENT_TIMESTAMP
-            WHERE id = $1
-              AND (last_triggered_at IS NULL OR last_triggered_at < $2)
-            "#,
-        )
-        .bind(rule.id)
-        .bind(cooldown_threshold)
-        .execute(&mut *tx)
-        .await?;
-
-        #[cfg(feature = "sqlite")]
-        let updated = sqlx::query(
-            r#"
-            UPDATE alert_rules
-            SET last_triggered_at = datetime('now')
-            WHERE id = $1
-              AND (last_triggered_at IS NULL OR datetime(last_triggered_at) < datetime($2))
-            "#,
-        )
-        .bind(rule.id)
-        .bind(cooldown_threshold.naive_utc())
-        .execute(&mut *tx)
-        .await?;
-
-        let cooldown_suppressed = updated.rows_affected() == 0;
+        let cooldown_suppressed = !Self::reserve_cooldown(&mut tx, &rule, Utc::now()).await?;
         if cooldown_suppressed {
             log::debug!("Alert rule {} not found or in cooldown period", rule.id);
         }
