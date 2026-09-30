@@ -532,7 +532,7 @@ impl AlertService {
             UPDATE alert_rules
             SET last_triggered_at = CURRENT_TIMESTAMP
             WHERE id = $1
-              AND (cooldown_minutes = 0 OR last_triggered_at IS NULL
+              AND (cooldown_minutes <= 0 OR last_triggered_at IS NULL
                    OR last_triggered_at < $2::timestamptz - make_interval(mins => cooldown_minutes))
             "#,
         )
@@ -547,7 +547,7 @@ impl AlertService {
             UPDATE alert_rules
             SET last_triggered_at = datetime('now')
             WHERE id = $1
-              AND (cooldown_minutes = 0 OR last_triggered_at IS NULL
+              AND (cooldown_minutes <= 0 OR last_triggered_at IS NULL
                    OR datetime(last_triggered_at) < datetime($2, '-' || cooldown_minutes || ' minutes'))
             "#,
         )

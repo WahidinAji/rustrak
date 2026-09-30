@@ -129,6 +129,12 @@ async fn zero_cooldown_allows_first_and_subsequent_alerts() {
 }
 
 #[tokio::test]
+async fn negative_cooldown_behaves_as_disabled() {
+    // The API does not reject negatives, and SQLite cannot parse "--5 minutes".
+    exercise_cooldown(-5, Some(Utc::now()), 0).await;
+}
+
+#[tokio::test]
 async fn positive_cooldown_still_suppresses_and_deduplicates_replays() {
     exercise_cooldown(60, Some(Utc::now()), 2).await;
 }
