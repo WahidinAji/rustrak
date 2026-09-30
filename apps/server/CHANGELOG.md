@@ -1,5 +1,11 @@
 # @rustrak/server
 
+## 0.15.2
+
+### Patch Changes
+
+- [`543ee30`](https://github.com/rustrak/rustrak/commit/543ee30f75add5a555accfac8dadfcc6597c80e7) Thanks [@AbianS](https://github.com/AbianS)! - Users can change their password from account settings, through `POST /auth/me/password` and `auth.changePassword()` in `@rustrak/client`. An alert rule with a zero or negative cooldown now fires every time, and the cooldown is checked against the rule's current value (@jav-ed).
+
 ## 0.15.1
 
 ### Patch Changes
