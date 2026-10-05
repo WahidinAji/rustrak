@@ -1604,6 +1604,8 @@
       },
       "title": "Intégrations",
       "subtitle": "Connectez Rustrak à vos outils et services pour automatiser vos flux de travail et garder le contrôle des erreurs.",
+      "backToAlerts": "Retour aux paramètres des alertes",
+      "backToProjects": "Retour aux projets",
       "loadFailed": "Impossible de charger les intégrations"
     },
     "storage": {
