@@ -104,7 +104,7 @@ export function AlertsSettings({
             {t.rich('settings.noIntegrationsHint', {
               link: (chunks) => (
                 <Link
-                  href="/settings/integrations"
+                  href={`/settings/integrations?projectId=${project.id}`}
                   className="text-primary underline"
                 >
                   {chunks}

@@ -1604,6 +1604,8 @@
       },
       "title": "Integrări",
       "subtitle": "Conectează Rustrak cu uneltele și serviciile tale pentru a automatiza fluxurile de lucru și a fi la curent cu erorile.",
+      "backToAlerts": "Înapoi la setările alertelor",
+      "backToProjects": "Înapoi la proiecte",
       "loadFailed": "Integrările nu au putut fi încărcate"
     },
     "storage": {

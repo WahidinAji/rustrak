@@ -1604,6 +1604,8 @@
       },
       "title": "集成",
       "subtitle": "将 Rustrak 与您的工具和服务集成，以自动化工作流并及时掌握错误动态。",
+      "backToAlerts": "返回告警设置",
+      "backToProjects": "返回项目列表",
       "loadFailed": "无法加载集成"
     },
     "storage": {
